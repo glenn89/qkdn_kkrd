@@ -39,6 +39,8 @@ class QuantumEnvironment:
         self.init_num_channel = None
         self.key_pool_size = 0
         self.Key_pool = None
+        self.logi_G_edges = None
+        self.logi_key_pool = None
         self.key_life_time = 0
         self.time_step = 0
         self.source_node = None
@@ -87,13 +89,31 @@ class QuantumEnvironment:
         }
         nx.set_edge_attributes(self.G, edges_attribute)
         self.key_pool.update((key, []) for key in self.G.edges)  # Generate key pool
+        self.logi_key_pool.update((key, []) for key in self.G.edges)
+        self.logi_G_edges = nx.to_numpy_array(self.G, weight='num_key')
+        self.logi_G = copy.deepcopy(self.G)
         self.num_key_with_qber()  # Reflect the number of keys with qber
 
     # source, target node 추가하여 key pool 업데이트 및 logical graph 만들기
     # next state로 활용 하면 좋을 것 같음
-    def update_logical_topology(self):
-        self.logi_G = copy.deepcopy(self.G)
-        self.logi_G.add_weighted_edges_from()
+    def update_logical_topology(self, routing_path):
+        min_lifetime = self.key_life_time
+        for i in range(len(routing_path) - 1):
+            if routing_path[i] < routing_path[i+1]:
+                if min_lifetime > self.key_pool[(routing_path[i], routing_path[i+1])][0]:
+                    min_lifetime = self.key_pool[(routing_path[i], routing_path[i+1])][0]
+            else:
+                if min_lifetime > self.key_pool[(routing_path[i+1], routing_path[i])][0]:
+                    min_lifetime = self.key_pool[(routing_path[i+1], routing_path[i])][0]
+
+        if (self.source_node, self.target_node) in self.logi_key_pool:
+            self.logi_key_pool[(self.source_node, self.target_node)].append(min_lifetime)
+        else:
+            self.logi_key_pool[(self.source_node, self.target_node)] = [min_lifetime]
+
+        # Add edge
+        self.logi_G.add_edges_from([(self.source_node, self.target_node, {'weight': 0, 'count_rate': 300, 'init_qber': 0, 'qber': 0, 'num_key': 0, 'num_channel': 0.0})])
+        self.logi_G[self.source_node][self.target_node]['num_key'] = len(self.logi_key_pool[(self.source_node, self.target_node)])
 
     def num_key_with_qber(self):
         edges = list(self.G.edges())
@@ -111,44 +131,46 @@ class QuantumEnvironment:
         for edge in edges:
             error_rate = self.G[edge[0]][edge[1]]['qber'] / 100
             ############# Real key rate version #############
-            try:
-                # generated_keys = round(
-                #     self.generate_key_size * max(
-                #         1 + error_rate * np.log2(error_rate) + (1 - error_rate) * np.log2(1 - error_rate), 0
-                #     )
-                # )
-                # np.random.seed()
-                ######### Apply Pareto distribution #########
-                # generated_keys = self.generate_key_size - np.random.pareto(1.5, 1).astype(int)[0] * 100
-                # np.random.seed(self.num_seed)
-                ######### Apply static generated key #########
-                generated_keys = self.generate_key_size
+            # generated_keys = round(
+            #     self.generate_key_size * max(
+            #         1 + error_rate * np.log2(error_rate) + (1 - error_rate) * np.log2(1 - error_rate), 0
+            #     )
+            # )
+            # np.random.seed()
+            ######### Apply Pareto distribution #########
+            # generated_keys = self.generate_key_size - np.random.pareto(1.5, 1).astype(int)[0] * 100
+            # np.random.seed(self.num_seed)
+            ######### Apply static generated key #########
+            generated_keys = self.generate_key_size
 
-                # print("Gen key: ", generated_keys)
-                if generated_keys < 0:
-                    generated_keys = 0
+            # print("Gen key: ", generated_keys)
+            if generated_keys < 0:
+                generated_keys = 0
 
-                if self.topology_conf['NAME'] == 'BUTTERFLY':
-                    if edge[0] == 0 or edge[1] == 5:
-                        generated_keys += 10
-                self.total_generation_keys += generated_keys
+            if self.topology_conf['NAME'] == 'BUTTERFLY':
+                if edge[0] == 0 or edge[1] == 5:
+                    generated_keys += 10
+            self.total_generation_keys += generated_keys
 
-                # Append key life time
-                # Simple topo version and else
-                if self.topology_conf['NAME'] == 'SIMPLE':
-                    self.key_pool[(0, 1)] = [1, 2, 2, 100]
-                    self.key_pool[(0, 2)] = [100, 100, 100, 100, 100, 100]
-                    self.key_pool[(1, 3)] = [1, 2, 2, 100]
-                    self.key_pool[(2, 3)] = [100, 100, 100, 100, 100, 100]
-                else:
-                    for _ in range(generated_keys):
-                        if len(self.key_pool[edge]) + generated_keys > self.key_pool_size:
-                            self.key_pool[edge] = self.key_pool[edge][len(self.key_pool[edge]) + generated_keys - self.key_pool_size:]
-                        self.key_pool[edge].append(self.key_life_time)
+            # Append key life time
+            # Simple topo version and else
+            if self.topology_conf['NAME'] == 'SIMPLE':
+                self.key_pool[(0, 1)] = [1, 2, 2, 100]
+                self.key_pool[(0, 2)] = [100, 100, 100, 100, 100, 100]
+                self.key_pool[(1, 3)] = [1, 2, 2, 100]
+                self.key_pool[(2, 3)] = [100, 100, 100, 100, 100, 100]
+            else:
+                for _ in range(generated_keys):
+                    if len(self.key_pool[edge]) + generated_keys > self.key_pool_size:
+                        self.key_pool[edge] = self.key_pool[edge][len(self.key_pool[edge]) + generated_keys - self.key_pool_size:]
+                    self.key_pool[edge].append(self.key_life_time)
 
-                self.G[edge[0]][edge[1]]['num_key'] = len(self.key_pool[edge])
-            except ValueError as e:
-                print(error_rate, e)
+                for key in self.key_pool:
+                    if key in self.logi_key_pool:  # 같은 키가 있는 경우
+                        self.logi_key_pool[key] = self.key_pool[key]  # key_pool의 값을 logi_key_pool로 복사
+
+            self.G[edge[0]][edge[1]]['num_key'] = len(self.key_pool[edge])
+            self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
 
         # print(self.time_step, [d['num_key'] for u, v, d in self.G.edges(data=True)])
             # generated_keys = self.generate_key_size
@@ -215,6 +237,7 @@ class QuantumEnvironment:
         self.key_life_time = 20
         self.key_pool_size = 100_000
         self.key_pool = {}
+        self.logi_key_pool = {}
         self.service_duration_time = []
         self.service_routing_path = []
 
@@ -289,6 +312,8 @@ class QuantumEnvironment:
         if not self.training:
             for _ in range(self.num_request):
                 routing_path = self.find_routing_path()
+                self.update_logical_topology(routing_path)
+                self.apply_routing_path(routing_path)
                 # if self.metric_type == 'num_key':
                 # print("time step: ", self.time_step, "routing path: ", routing_path)
                 #     self.plot_topology()
@@ -678,7 +703,44 @@ class QuantumEnvironment:
         #     print("Final routing path: ", routing_path)
         # Consumed quantum key
 
-        self.apply_routing_path(routing_path)
+        # self.apply_routing_path(routing_path)
+
+        return routing_path
+
+    def logical_find_routing_path(self):
+        accumulate_qber = []
+        accumulate_num_key = []
+        accumulate_count_rate = []
+        loop_nodes = []
+        routing_path = []
+        routing_path.append(self.source_node)
+
+        # Using Num_key
+        # shortest_routing_path = self.temp_shrotest_path(self.source_node, self.target_node, 'weight')
+        while self.source_node != self.target_node:
+            neighbor_nodes = [node for node in self.logi_G.neighbors(self.source_node) if
+                              self.logi_G[self.source_node][node]['num_key'] > 0 and
+                              self.logi_G[self.source_node][node]['num_key'] >= self.consume_key_size]
+            neighbor_nodes = [node for node in neighbor_nodes if node not in routing_path]  # check in routing path
+            neighbor_nodes = [node for node in neighbor_nodes if node not in loop_nodes]  # check the loop
+
+            if len(neighbor_nodes) == 0 and len(accumulate_count_rate) > 0:
+                loop_nodes.append(self.source_node)
+                routing_path.pop()
+                accumulate_num_key.pop()
+                accumulate_count_rate.pop()
+                self.source_node = routing_path[-1]
+                continue
+
+            elif len(neighbor_nodes) == 0 and len(accumulate_count_rate) == 0:
+                return []
+
+            selected_node = self.select_next_node(neighbor_nodes, accumulate_qber, accumulate_num_key, accumulate_count_rate)
+            routing_path.append(selected_node)
+            self.source_node = selected_node
+
+        # if len(shortest_routing_path) != 0 and len(shortest_routing_path) * 2 <= len(routing_path):
+        #     routing_path = shortest_routing_path
 
         return routing_path
 
