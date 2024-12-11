@@ -47,40 +47,40 @@ if __name__ == "__main__":
     # plt.title('QBER Over Time')
     # plt.legend()
     # plt.show()
-
-    def generate_packet_counts(size, alpha):
-        # 파레토 분포를 따르는 패킷 수 생성
-        pareto_counts = 30 - np.random.pareto(alpha, size) * 30
-        print(pareto_counts)
-        print(np.mean(pareto_counts), max(pareto_counts), min(pareto_counts))
-        for i in range(len(pareto_counts)):
-            if pareto_counts[i] < 0:
-                pareto_counts[i] = 0
-
-        return pareto_counts.astype(int)
-
-
-    def simulate_packet_generation(steps, alpha):
-        # 각 스텝에서 생성되는 패킷 수 생성
-        packet_counts = generate_packet_counts(steps, alpha)
-
-        # 패킷 수 시각화
-        plt.plot(range(1, steps + 1), packet_counts, marker='o', linestyle='-')
-        plt.xlabel('Step', fontsize=15)
-        plt.ylabel('The number of quantum key', fontsize=15)
-        plt.title('Simulation of Quantum key Generation', fontsize=15)
-        plt.xticks(fontsize=15)
-        plt.yticks(fontsize=15)
-        plt.grid(True)
-        plt.show()
-
-
-    # 시뮬레이션 파라미터 설정
-    steps = 100  # 시뮬레이션 스텝 수
-    alpha = 12     # 파레토 분포의 모수
-
-    # 패킷 생성 시뮬레이션
-    simulate_packet_generation(steps, alpha)
+    #
+    # def generate_packet_counts(size, alpha):
+    #     # 파레토 분포를 따르는 패킷 수 생성
+    #     pareto_counts = 30 - np.random.pareto(alpha, size) * 30
+    #     print(pareto_counts)
+    #     print(np.mean(pareto_counts), max(pareto_counts), min(pareto_counts))
+    #     for i in range(len(pareto_counts)):
+    #         if pareto_counts[i] < 0:
+    #             pareto_counts[i] = 0
+    #
+    #     return pareto_counts.astype(int)
+    #
+    #
+    # def simulate_packet_generation(steps, alpha):
+    #     # 각 스텝에서 생성되는 패킷 수 생성
+    #     packet_counts = generate_packet_counts(steps, alpha)
+    #
+    #     # 패킷 수 시각화
+    #     plt.plot(range(1, steps + 1), packet_counts, marker='o', linestyle='-')
+    #     plt.xlabel('Step', fontsize=15)
+    #     plt.ylabel('The number of quantum key', fontsize=15)
+    #     plt.title('Simulation of Quantum key Generation', fontsize=15)
+    #     plt.xticks(fontsize=15)
+    #     plt.yticks(fontsize=15)
+    #     plt.grid(True)
+    #     plt.show()
+    #
+    #
+    # # 시뮬레이션 파라미터 설정
+    # steps = 100  # 시뮬레이션 스텝 수
+    # alpha = 12     # 파레토 분포의 모수
+    #
+    # # 패킷 생성 시뮬레이션
+    # simulate_packet_generation(steps, alpha)
 
 #
 # cost266_desc = {
@@ -148,81 +148,95 @@ if __name__ == "__main__":
 # }
 #
 #
-# def check_topology(config):
-#     import numpy as np
-#
-#     qkd_topo = config["QKD_TOPOLOGY"]
-#     qkd_node = config["NUM_QKD_NODE"]
-#     qkd_link = config["NUM_QKD_LINK"]
-#
-#     user_topology = np.ones(shape=(qkd_node, qkd_node))
-#     user_topo = user_topology - np.diag(np.diag(user_topology))
-#
-#     flat_qkd_topo = sum(qkd_topo, [])
-#     flat_user_topo = sum(user_topo.tolist(), [])
-#
-#     direct_key_pool = config["NUM_DIRECT_KEY_POOL"]
-#     indirect_key_pool = config["NUM_INDIRECT_KEY_POOL"]
-#
-#     check_list = {}
-#
-#     # check number of qkd node
-#     if qkd_node == len(qkd_topo):
-#         check_list['NUM_QKD_NODE'] = True
-#     else:
-#         check_list['NUM_QKD_NODE'] = False
-#
-#     # check number of qkd link
-#     if qkd_link == int(sum(flat_qkd_topo)/2):
-#         check_list['NUM_QKD_LINK'] = True
-#     else:
-#         check_list['NUM_QKD_LINK'] = False
-#
-#     # check number of direct key pool
-#     if direct_key_pool == int(sum(flat_qkd_topo)):
-#         check_list['NUM_DIRECT_KEY_POOL'] = True
-#     else:
-#         check_list['NUM_DIRECT_KEY_POOL'] = False
-#
-#     # check number of indirect key pool
-#     if indirect_key_pool == int(sum([1 for user_link, qkd_link in zip(flat_user_topo, flat_qkd_topo) if (user_link - qkd_link) > 0])):
-#         check_list['NUM_INDIRECT_KEY_POOL'] = True
-#     else:
-#         check_list['NUM_INDIRECT_KEY_POOL'] = False
-#
-#     return (check_list, False in check_list.values())
-#
-#
-# if __name__ == "__main__":
-#     # False is not error
-#     check_list, check_error = check_topology(cost266_desc)
-#     if check_error:
-#         print("!"*10 + "Find Error" + "!"*10)
-#         print("check_list: ", check_list)
-#     else:
-#         print("@"*10 + "No Error" + "@"*10)
-#
-#         import networkx as nx
-#         import numpy as np
-#         import matplotlib.pyplot as plt
-#
-#         graph = nx.Graph()
-#         graph.add_nodes_from(cost266_desc['QKD_NODES'])
-#
-#         edges = []
-#
-#         node_1 = np.where(np.array(cost266_desc['QKD_TOPOLOGY']) == 1)[0]
-#         node_2 = np.where(np.array(cost266_desc['QKD_TOPOLOGY']) == 1)[1]
-#
-#         for (i, j) in zip(node_1, node_2):
-#             edges.append((i, j))
-#
-#         graph.add_edges_from(edges)
-#
-#         pos = {0:[1, 18], 1:[0, 16], 2:[2, 13], 3:[5, 15], 4:[9, 16], 5:[10, 20], 6:[16, 19], 7:[11, 17], 8:[12, 14],
-#                9:[19, 14], 10:[5, 12], 11:[7, 11], 12:[13, 11], 13:[3, 10], 14:[6, 10], 15:[10, 9], 16:[15, 9],
-#                17:[17, 8], 18:[7, 7], 19:[2, 4], 20:[5, 6], 21:[8, 5], 22:[14, 6], 23:[18, 4],
-#                24:[1, 2], 25:[4, 3], 26:[12, 3], 27:[17, 1]}
-#
-#         nx.draw(graph, pos)
-#         plt.show()
+    import networkx as nx
+    import matplotlib.pyplot as plt
+
+    # NSFNet 노드 정의: 도시 이름 및 위치
+    nsfnet_nodes = {
+        1: {"city": "Ithaca", "pos": (4, 8)},
+        2: {"city": "Princeton", "pos": (6, 6)},
+        3: {"city": "Pittsburgh", "pos": (5, 5)},
+        4: {"city": "Ann Arbor", "pos": (3, 4)},
+        5: {"city": "Champaign", "pos": (3, 3)},
+        6: {"city": "Lincoln", "pos": (2, 2)},
+        7: {"city": "Boulder", "pos": (1, 3)},
+        8: {"city": "Salt Lake City", "pos": (1, 5)},
+        9: {"city": "Seattle", "pos": (0, 8)},
+        10: {"city": "San Diego", "pos": (0, 2)},
+        11: {"city": "Sunnyvale", "pos": (0, 6)},
+        12: {"city": "Los Angeles", "pos": (0, 4)},
+        13: {"city": "Houston", "pos": (4, 0)},
+        14: {"city": "Atlanta", "pos": (5, 2)},
+    }
+
+    # NSFNet 엣지 정의: 노드 간 연결 및 가중치
+    nsfnet_edges = [
+        (1, 2, {"weight": 2}),
+        (1, 3, {"weight": 3}),
+        (2, 3, {"weight": 1}),
+        (3, 4, {"weight": 4}),
+        (4, 5, {"weight": 5}),
+        (5, 6, {"weight": 3}),
+        (6, 7, {"weight": 2}),
+        (7, 8, {"weight": 4}),
+        (8, 9, {"weight": 5}),
+        (9, 11, {"weight": 6}),
+        (11, 12, {"weight": 1}),
+        (12, 10, {"weight": 2}),
+        (10, 13, {"weight": 4}),
+        (13, 14, {"weight": 3}),
+        (14, 1, {"weight": 6}),
+    ]
+
+    # 그래프 생성 및 확장
+    G = nx.Graph()
+    for node, attr in nsfnet_nodes.items():
+        G.add_node(node, **attr)
+
+    # 엣지 확장: 각 링크에 두 개의 노드 추가
+    extra_node_id = max(nsfnet_nodes.keys()) + 1
+    for u, v, attr in nsfnet_edges:
+        # 기존 엣지를 두 개의 새로운 엣지로 분리
+        new_node1 = extra_node_id
+        new_node2 = extra_node_id + 1
+        extra_node_id += 2
+
+        # 두 새로운 노드의 위치를 기존 노드 위치의 중간으로 설정
+        pos_u = nsfnet_nodes[u]["pos"]
+        pos_v = nsfnet_nodes[v]["pos"]
+        pos_new1 = ((pos_u[0] + pos_v[0]) / 2, (pos_u[1] + pos_v[1]) / 2)
+        pos_new2 = ((pos_new1[0] + pos_v[0]) / 2, (pos_new1[1] + pos_v[1]) / 2)
+
+        # 그래프에 새로운 노드 추가
+        G.add_node(new_node1, city=f"Node {new_node1}", pos=pos_new1)
+        G.add_node(new_node2, city=f"Node {new_node2}", pos=pos_new2)
+
+        # 기존 노드와 새로운 노드 연결
+        G.add_edge(u, new_node1, weight=attr["weight"] / 3)  # 분리된 링크의 가중치
+        G.add_edge(new_node1, new_node2, weight=attr["weight"] / 3)
+        G.add_edge(new_node2, v, weight=attr["weight"] / 3)
+
+    # 기존 노드와 새로운 노드의 위치 가져오기
+    pos = {node: data["pos"] for node, data in G.nodes(data=True)}
+    labels = {node: data["city"] for node, data in G.nodes(data=True)}
+    weights = nx.get_edge_attributes(G, "weight")
+
+    print()
+    print(nx.to_numpy_array(G, weight='weight'))
+
+    # 시각화
+    plt.figure(figsize=(12, 8))
+    nx.draw(
+        G,
+        pos,
+        with_labels=True,
+        labels=labels,
+        node_color="lightblue",
+        node_size=800,
+        font_size=8,
+        font_weight="bold",
+    )
+    nx.draw_networkx_edge_labels(G, pos, edge_labels={e: f"{w:.2f}" for e, w in weights.items()}, font_size=8)
+    plt.title("NSFNet Topology with Additional Nodes on Each Link")
+    plt.axis("off")
+    plt.show()

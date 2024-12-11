@@ -226,14 +226,14 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
         self.training = training
 
-        self.generate_key_time_slot = 15
-        self.generate_key_size = 2
+        self.generate_key_time_slot = 10
+        self.generate_key_size = 10
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
         self.init_num_channel = 3
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 0
+        self.num_request = 4
         self.key_life_time = 20
         self.key_pool_size = 100_000
         self.key_pool = {}
@@ -296,7 +296,7 @@ class QuantumEnvironment:
         else:
             # self.num_request = np.random.pareto(4, 1).astype(int)[0] * 5
             # self.num_request = np.random.randint(1, 2, 1)[0]
-            self.num_request = 1
+            self.num_request = self.num_request
         # print("time step: ", self.time_step, "the number of request: ", self.num_request)
         # print("Time step: ", self.time_step, "/ Num request: ", self.num_request, "/ Keys: ", self.key_pool)
         # print(u, v, d['num_key'], d['weight'])
@@ -330,6 +330,8 @@ class QuantumEnvironment:
                         self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
                         self.used_keys += self.consume_key_size
 
+                self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
+                                                                      size=2, replace=False)
                 # for i in self.G.edges:
                 #     if i == (0, 1):
                 #         # if self.G.edges[i]['num_key'] != len(self.key_pool[i]):
