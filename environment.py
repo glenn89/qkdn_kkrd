@@ -1,4 +1,5 @@
 import copy
+from random import random
 
 import networkx as nx
 import numpy as np
@@ -16,6 +17,7 @@ class QuantumEnvironment:
     def __init__(self, topology_type):
         self.G = None
         self.logi_G = None
+        self.expand_G = None
         self.topology_list = {
             'SIMPLE': topology_conf.simple_topo,
             'BUTTERFLY': topology_conf.butterfly_topo,
@@ -92,7 +94,33 @@ class QuantumEnvironment:
         self.logi_key_pool.update((key, []) for key in self.G.edges)
         self.logi_G_edges = nx.to_numpy_array(self.G, weight='num_key')
         self.logi_G = copy.deepcopy(self.G)
+
+        # Expand Nodes and Edges
+        self.expand_G = copy.deepcopy(self.G)
+        next_node_id = len(self.expand_G.nodes) + 1
+        edges = list(self.expand_G.edges(data=True))
+
+        for u, v, attr in edges:
+            # 기존 엣지 중간에 두 개의 노드를 추가
+            new_node1 = next_node_id
+            new_node2 = next_node_id + 1
+            next_node_id += 2
+
+            # 새 노드 추가
+            self.expand_G.add_node(new_node1, city=f"Node {new_node1}")
+            self.expand_G.add_node(new_node2, city=f"Node {new_node2}")
+
+            # 엣지 추가
+            num_key = attr["num_key"]
+            self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key)
+            self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key)
+            self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key)
+
+            # 기존 엣지 제거? (해야할까?)
+            self.expand_G.remove_edge(u, v)
+
         self.num_key_with_qber()  # Reflect the number of keys with qber
+
 
     # source, target node 추가하여 key pool 업데이트 및 logical graph 만들기
     # next state로 활용 하면 좋을 것 같음
@@ -172,6 +200,12 @@ class QuantumEnvironment:
             self.G[edge[0]][edge[1]]['num_key'] = len(self.key_pool[edge])
             self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
 
+        # Expand G's num_key setting
+        for u, v, attr in self.expand_G.edges(data=True):
+            attr['num_key'] += int(np.random.normal(loc=generated_keys, scale=2, size=1))
+
+        print(self.expand_G.edges(data=True))
+
         # print(self.time_step, [d['num_key'] for u, v, d in self.G.edges(data=True)])
             # generated_keys = self.generate_key_size
             # self.G[edge[0]][edge[1]]['num_key'] += generated_keys
@@ -193,9 +227,6 @@ class QuantumEnvironment:
         # self.G[edge[0]][edge[1]]['num_key'] += 5
 
     def plot_topology(self):
-        position = {
-            0: [2, 12], 1: [4, 14], 2: [4, 10], 3: [8, 14], 4: [8, 10], 5: [10, 12]
-        }
         edge_labels = {}
         pos = nx.spring_layout(self.G)
 
@@ -206,6 +237,19 @@ class QuantumEnvironment:
             edge_labels[(u, v)] = "{0}".format(attr['num_key'])
         # nx.draw_networkx_edge_labels(self.G, position, edge_labels=edge_labels)
         nx.draw_networkx_edge_labels(self.G, pos, edge_labels=edge_labels)
+        plt.show()
+
+    def plot_expand_topology(self):
+        edge_labels = {}
+        pos = nx.spring_layout(self.expand_G)
+
+        # nx.draw(self.G, pos=position, node_color=self.topology_conf['QKD_NODES_COLOR_MAP'], with_labels=True)
+        nx.draw(self.expand_G, pos, with_labels=True)
+        # labels = nx.get_edge_attributes(self.G, 'count_rate')
+        for u, v, attr in self.expand_G.edges(data=True):
+            edge_labels[(u, v)] = "{0}".format(attr['num_key'])
+        # nx.draw_networkx_edge_labels(self.G, position, edge_labels=edge_labels)
+        nx.draw_networkx_edge_labels(self.expand_G, pos, edge_labels=edge_labels)
         plt.show()
 
     def plot_heatmap(self):
@@ -850,7 +894,7 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    env = QuantumEnvironment(topology_type='COST266')
+    env = QuantumEnvironment(topology_type='BUTTERFLY')
     max_time_step = 20    # 1_000
     num_simulation = 1
     seed = 0
@@ -905,7 +949,8 @@ if __name__ == "__main__":
 
     # QBER simulation
     env.metric_type = 'weighted_life_shortest'
-    # env.plot_topology()
+    env.plot_topology()
+    env.plot_expand_topology()
     for _ in range(num_simulation):
         s, _ = env.reset(seed=seed, max_time_step=max_time_step, training=False)
         for _ in range(max_time_step):
