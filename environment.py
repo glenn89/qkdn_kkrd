@@ -157,7 +157,7 @@ class QuantumEnvironment:
 
         # Generate key with qber
         for edge in edges:
-            error_rate = self.G[edge[0]][edge[1]]['qber'] / 100
+            # error_rate = self.G[edge[0]][edge[1]]['qber'] / 100
             ############# Real key rate version #############
             # generated_keys = round(
             #     self.generate_key_size * max(
@@ -177,7 +177,8 @@ class QuantumEnvironment:
 
             if self.topology_conf['NAME'] == 'BUTTERFLY':
                 if edge[0] == 0 or edge[1] == 5:
-                    generated_keys += 10
+                    # generated_keys += 10
+                    generated_keys += int(np.random.normal(loc=generated_keys, scale=2, size=1))
             self.total_generation_keys += generated_keys
 
             # Append key life time
@@ -204,7 +205,7 @@ class QuantumEnvironment:
         for u, v, attr in self.expand_G.edges(data=True):
             attr['num_key'] += int(np.random.normal(loc=generated_keys, scale=2, size=1))
 
-        print(self.expand_G.edges(data=True))
+        # print(self.expand_G.edges(data=True))
 
         # print(self.time_step, [d['num_key'] for u, v, d in self.G.edges(data=True)])
             # generated_keys = self.generate_key_size
