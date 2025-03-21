@@ -181,9 +181,12 @@ class QuantumEnvironment:
             for _ in range(generated_keys):
                 if len(self.expand_key_pool[edge]) + generated_keys > self.key_pool_size:
                     self.expand_key_pool[edge] = self.expand_key_pool[edge][len(self.expand_key_pool[edge]) + generated_keys - self.key_pool_size:]
+                    self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
                 self.expand_key_pool[edge].append(self.key_life_time)
+                self.logi_key_pool[edge].append(self.key_life_time)
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
+            self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
 
     def plot_topology(self):
         edge_labels = {}
@@ -229,7 +232,7 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 15
-        self.generate_key_size = 10
+        self.generate_key_size = 3
         self.lifetime_threshold = threshold
         self.proactive = proactive
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
@@ -466,13 +469,9 @@ class QuantumEnvironment:
         return result
 
     def calculate_based_lifetime_weight(self, net):
-        if self.proactive:
-            key_pool = self.logi_key_pool
-        else:
-            key_pool = self.expand_key_pool
         for edge in net.edges:
             life_time_weight = []
-            for key_life in key_pool[edge]:
+            for key_life in self.logi_key_pool[edge]:
                 if key_life <= self.key_life_time * 0.1:
                     life_time_weight.append(1000)
                 elif key_life <= self.key_life_time * 0.5:
@@ -481,7 +480,7 @@ class QuantumEnvironment:
                     life_time_weight.append(1)
             if sum(life_time_weight) != 0:
                 # net[edge[0]][edge[1]]['weight'] = len(life_time_weight) / sum(life_time_weight)
-                net[edge[0]][edge[1]]['weight'] = (len(key_pool[edge]) * 1) / sum(key_pool[edge])
+                net[edge[0]][edge[1]]['weight'] = (len(self.logi_key_pool[edge]) * 1) / sum(self.logi_key_pool[edge])
             elif sum(life_time_weight) == 0:
                 net[edge[0]][edge[1]]['weight'] = 0.0
 
@@ -538,19 +537,23 @@ class QuantumEnvironment:
         routing_path = []
         routing_path.append(self.source_node)
 
-        if self.proactive:
-            graph = self.logi_G
-        else:
-            graph = self.expand_G
-
         # Using weighted shortest path
         # routing_path = nx.shortest_path(self.G, source=0, target=5, weight='num_key')
 
         if self.metric_type == 'simple_shortest':
-            routing_path = nx.shortest_path(graph, self.source_node, self.target_node)
-            for i in range(len(routing_path) - 1):
-                if graph[routing_path[i]][routing_path[i+1]]['num_key'] < self.consume_key_size:
-                    return []
+            copied_G = copy.deepcopy(self.logi_G)
+            subnet = nx.subgraph_view(
+                copied_G,
+                filter_edge=lambda node_1_id, node_2_id: \
+                    True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
+            )
+            if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
+                return []
+
+            # routing_path = nx.shortest_path(subnet, 0, 5)
+            for edge in subnet.edges:
+                subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
+            routing_path = nx.shortest_path(subnet, self.source_node, self.target_node)
             # copied_G = copy.deepcopy(self.G)
             # subnet = nx.subgraph_view(
             #     copied_G,
@@ -566,7 +569,7 @@ class QuantumEnvironment:
             # routing_path = nx.astar_path(subnet, self.source_node, self.target_node, None, 'weight')
 
         if self.metric_type == 'weighted_shortest':
-            copied_G = copy.deepcopy(graph)
+            copied_G = copy.deepcopy(self.logi_G)
             subnet = nx.subgraph_view(
                 copied_G,
                 filter_edge=lambda node_1_id, node_2_id: \
@@ -581,7 +584,7 @@ class QuantumEnvironment:
             routing_path = nx.shortest_path(subnet, self.source_node, self.target_node, 'weight')
 
         if self.metric_type == 'weighted_life_shortest':
-            copied_G = copy.deepcopy(graph)
+            copied_G = copy.deepcopy(self.logi_G)
             subnet = nx.subgraph_view(
                 copied_G,
                 filter_edge=lambda node_1_id, node_2_id: \
@@ -846,9 +849,9 @@ if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='BUTTERFLY')
     max_time_step = 500    # 1_000
     threshold = 10
-    proactive = True
+    proactive = False
     num_simulation = 1
-    seed = 0
+    seed = 3
     action = []
 
     weighted_shortest_reward, shortest_reward, qber_reward, num_key_reward, combination_reward = 0, 0, 0, 0, 0
@@ -981,8 +984,8 @@ if __name__ == "__main__":
     print("Average Results:")
     print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Used percentage':<20}{'Average delay':<20}")
     print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{(shortest_average_used_keys/shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay/max_time_step}ms")
-    print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay/max_time_step}ms")
-    print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step}ms")
+    print(f"{'weighted_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step}ms")
+    print(f"{'life_time_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step}ms")
     # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
     # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
