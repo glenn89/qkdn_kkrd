@@ -5,12 +5,6 @@ if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt
 
-    for i in range(5):
-        for j in range(5):
-            if j == 2:
-                break
-            print(f"i={i}, j={j}")
-
     # results = np.random.binomial(500, 0.08)
     # print(results)
     #

@@ -1,4 +1,5 @@
 import copy
+from itertools import combinations
 from random import random
 
 import networkx as nx
@@ -31,6 +32,7 @@ class QuantumEnvironment:
         self.max_time_step = 0
         self.training = None
         self.proactive = None
+        self.proactive_type = None
 
         self.generate_key_size = 0
         self.generate_key_time_slot = 0
@@ -88,11 +90,8 @@ class QuantumEnvironment:
         self.G.add_weighted_edges_from(list((edges[n][0], edges[n][1], 0) for n in range(len(edges))))
         edges_attribute = {
             (edges[n][0], edges[n][1]): {
-                "count_rate": self.topology_conf['COUNT_RATE'][n],
-                "init_qber": self.topology_conf['INIT_QBER'][n],
-                "qber": self.topology_conf['QBER'][n],
+                "weight": self.topology_conf['num_key'][n],
                 "num_key": self.topology_conf['num_key'][n],
-                "num_channel": self.topology_conf['num_channel'][n]
             } for n in range(len(edges))
         }
         nx.set_edge_attributes(self.G, edges_attribute)
@@ -125,48 +124,60 @@ class QuantumEnvironment:
             # 기존 엣지 제거
             self.expand_G.remove_edge(u, v)
 
-
         self.expand_key_pool.update((key, []) for key in self.expand_G.edges)  # Generate expand key pool
         for edge in self.expand_G.edges:
             self.logi_G.add_edge(edge[0], edge[1], weight=0, num_key=0)
         self.logi_key_pool.update({edge: [] for edge in self.expand_key_pool if edge not in self.logi_key_pool})  # generate logical key pool
 
-        self.num_key_with_qber()  # Reflect the number of keys with qber
+        # self.G의 논리적 edge 추가
+        all_possible_edges = list(combinations(self.G.nodes, 2))
+        for u, v in all_possible_edges:
+            if not self.logi_G.has_edge(u, v):
+                self.logi_G.add_edge(u, v, weight=0, num_key=0)
+            if (u, v) not in self.logi_key_pool and (v, u) not in self.logi_key_pool:
+                self.logi_key_pool[(u, v)] = []
+
+        self.key_generation()  # Reflect the number of keys with qber
 
     # source, target node 추가하여 key pool 업데이트 및 logical graph 만들기
     # next state로 활용 하면 좋을 것 같음
     def update_logical_topology(self):
-        min_lifetime = self.key_life_time
         max_lifetime = self.key_life_time
-        for edge in self.G.edges:
+        if self.proactive_type == '1-hop':
+            G_edges = self.G.edges
+        elif self.proactive_type == 'n-hop':
+            G_edges = list(combinations(self.G.nodes, 2))
+        for edge in G_edges:
+            min_lifetime = self.key_life_time
             path = nx.shortest_path(self.expand_G, edge[0], edge[1])
             if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                 continue
             # path 경로 내의 가장 낮은 lifetime 찾기
+            # 먼저 min_lifetime 계산
             for i in range(len(path) - 1):
-                sorted_key = tuple(sorted((path[i], path[i+1])))
+                sorted_key = tuple(sorted((path[i], path[i + 1])))
                 if len(self.expand_key_pool[sorted_key]) > 0:
-                    if min_lifetime > self.expand_key_pool[sorted_key][0]:
-                        min_lifetime = self.expand_key_pool[sorted_key][0]
+                    min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
+
+            # 그 다음에 키 소비
+            for i in range(len(path) - 1):
+                sorted_key = tuple(sorted((path[i], path[i + 1])))
                 self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                 self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
+                self.used_keys += self.consume_key_size
+                self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
 
             if max_lifetime - min_lifetime < self.lifetime_threshold:
                 if edge in self.logi_key_pool:
-                    self.logi_key_pool[edge].append(min_lifetime)
+                    self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
                     self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
-
-        # Copy expand_key_pool
-        for edge in self.expand_key_pool:
-            if edge in self.logi_key_pool:
-                self.logi_key_pool[edge] = copy.deepcopy(self.expand_key_pool[edge])
-                self.logi_G.edges[edge]['num_key'] = len(self.expand_key_pool[edge])
 
         # Sorting logi_key_pool
         for key in self.logi_key_pool:
             self.logi_key_pool[key].sort()
 
-    def num_key_with_qber(self):
+    def key_generation(self):
         edges = list(self.expand_G.edges())
 
         # Generate key with qber
@@ -226,15 +237,16 @@ class QuantumEnvironment:
         plt.title('Sophisticated Network with Red Link Strength Heatmap')
         plt.show()
 
-    def reset(self, seed, max_time_step, proactive, threshold):
-        self.num_seed = seed
+    def reset(self, seed, max_time_step, proactive, proactive_type, threshold):
+        self.num_seed = 1
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 15
-        self.generate_key_size = 3
-        self.lifetime_threshold = threshold
-        self.proactive = proactive
+        self.generate_key_size = 6
+        self.lifetime_threshold = 10
+        self.proactive = False
+        self.proactive_type = '1-hop'
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
         self.init_num_channel = 3
         self.consume_key_size = 1
@@ -270,7 +282,7 @@ class QuantumEnvironment:
             self.G[edge[0]][edge[1]]['num_channel'] = self.init_num_channel
 
         # self.calculate_based_lifetime_weight(self.G)
-        self.calculate_based_num_key_weight(self.G)
+        # self.calculate_based_num_key_weight(self.G)
 
         self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
         # self.source_node, self.target_node = 0, self.topology_conf['NUM_QKD_NODE'] - 1
@@ -303,10 +315,9 @@ class QuantumEnvironment:
                 self.num_request = 2
             if self.time_step == 1:
                 self.num_request = 7
-        else:
-            # self.num_request = np.random.pareto(4, 1).astype(int)[0] * 5
-            # self.num_request = np.random.randint(1, 2, 1)[0]
-            self.num_request = self.num_request
+        # else:
+        #     # self.num_request = np.random.pareto(4, 1).astype(int)[0] * 5
+        #     # self.num_request = np.random.randint(1, 2, 1)[0]
 
         for _ in range(self.num_request):
             if self.proactive:
@@ -314,24 +325,35 @@ class QuantumEnvironment:
             routing_path = self.find_routing_path()
             # print("time step: ", self.time_step, "routing path: ", routing_path)
             self.apply_routing_path(routing_path)
+            # print("11111111111111111111111111111111111111")
+            # print("timestep: ", self.time_step, "routing path: ", routing_path)
+            # print(self.expand_key_pool)
+            # print(self.logi_key_pool)
+            # print(self.logi_G.edges(data=True))
+            # print()
             # if self.metric_type == 'num_key':
             # self.plot_topology()
             if not routing_path:
                 self.session_blocking -= 1
             else:
                 self.reward += 1
-                for i in range(len(routing_path) - 1):
-                    # self.node_num_heat[routing_path[i]][routing_path[i+1]] += 1
-                    # self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
-                    self.used_keys += self.consume_key_size
-                    if (routing_path[i], routing_path[i+1]) in self.G.edges:
-                        delay += 40
-                    elif (routing_path[i], routing_path[i+1]) in self.expand_G.edges:
-                        delay += 20
+                delay = 0
+                if len(routing_path) > 2:
+                    for node in routing_path[1:-1]:
+                        # self.node_num_heat[routing_path[i]][routing_path[i+1]] += 1
+                        # self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
+                        self.used_keys += self.consume_key_size
+                        if node in self.G.nodes:
+                            delay += 40
+                        elif node in self.expand_G.nodes and node not in self.G.nodes:
+                            delay += 20
                     self.delay += delay + 20
+                else:
+                    self.delay += 20
+                print("timestep: ", self.time_step, "path: ", routing_path, self.delay)
 
-            self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
-                                                                  size=2, replace=False)
+            # self.source_node, self.target_node = 1, 9
+            # self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
             # for i in self.G.edges:
             #     if i == (0, 1):
             #         # if self.G.edges[i]['num_key'] != len(self.key_pool[i]):
@@ -339,13 +361,16 @@ class QuantumEnvironment:
             #         print("time step: ", self.time_step, "edge: ", i, "num_key: ", len(self.key_pool[i]), self.key_pool[i])
             #         print()
 
-        for u, v, attr in self.expand_G.edges(data=True):
+        for u, v, attr in self.logi_G.edges(data=True):
             self.remaining_keys += attr['num_key']
-            self.expand_key_pool[(u, v)] = [life - 1 for life in self.expand_key_pool[(u, v)]] # lifetime -1
-            self.expand_key_pool[(u, v)] = [life for life in self.expand_key_pool[(u, v)] if life >= 1] # remove expired key
+            if (u, v) in self.expand_G.edges:
+                self.expand_key_pool[(u, v)] = [life - 1 for life in self.expand_key_pool[(u, v)]] # lifetime -1
+                self.expand_key_pool[(u, v)] = [life for life in self.expand_key_pool[(u, v)] if life >= 1] # remove expired key
+                self.expand_G.edges[(u, v)]['num_key'] = len(self.expand_key_pool[(u, v)])
             self.logi_key_pool[(u, v)] = [life - 1 for life in self.logi_key_pool[(u, v)]]  # lifetime -1
             self.logi_key_pool[(u, v)] = [life for life in self.logi_key_pool[(u, v)] if life >= 1]  # remove expired key
-            self.expand_G.edges[(u, v)]['num_key'] = len(self.expand_key_pool[(u, v)])
+            self.logi_G.edges[(u, v)]['num_key'] = len(self.logi_key_pool[(u, v)])
+
 
         # print(self.expand_G.edges(data=True))
         # print(self.logi_G.edges(data=True))
@@ -353,7 +378,7 @@ class QuantumEnvironment:
         # print()
 
         if self.time_step != 0 and self.time_step % self.generate_key_time_slot == 0:
-            self.num_key_with_qber()
+            self.key_generation()
             # print(self.G.edges(data=True))
         # print(self.metric_type, self.G.edges(data=True))
 
@@ -422,52 +447,6 @@ class QuantumEnvironment:
 
         return state
 
-    def temp_shrotest_path(self, weight):
-        copied_G = copy.deepcopy(self.G)
-        subnet = nx.subgraph_view(
-            copied_G,
-            filter_edge=lambda node_1_id, node_2_id: \
-                True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
-        )
-        if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
-            return []
-
-        for edge in subnet.edges:
-            subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
-        routing_path = nx.astar_path(subnet, self.source_node, self.target_node, None, weight)
-        # routing_path = nx.shortest_path(subnet, self.source_node, self.target_node)
-
-        return routing_path
-
-    def check_routing_path(self, routing_path):
-        result = True
-        if len(routing_path) == 0:
-            return False
-        copied_G = copy.deepcopy(self.G)
-        subnet = nx.subgraph_view(
-            copied_G,
-            filter_edge=lambda node_1_id, node_2_id: \
-                True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
-        )
-        # subnet = nx.subgraph_view(
-        #     copied_G,
-        #     filter_edge=lambda node_1_id, node_2_id: \
-        #         True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size and
-        #                 copied_G.edges[(node_1_id, node_2_id)]['num_channel'] > 0 else False
-        # )
-        if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
-            return False
-
-        for i in range(len(routing_path) - 1):
-            if routing_path[i] < routing_path[i+1]:
-                if self.G[routing_path[i]][routing_path[i+1]]['num_key'] < self.consume_key_size:
-                    result = False
-            else:
-                if self.G[routing_path[i+1]][routing_path[i]]['num_key'] < self.consume_key_size:
-                    result = False
-
-        return result
-
     def calculate_based_lifetime_weight(self, net):
         for edge in net.edges:
             life_time_weight = []
@@ -479,55 +458,10 @@ class QuantumEnvironment:
                 else:
                     life_time_weight.append(1)
             if sum(life_time_weight) != 0:
-                # net[edge[0]][edge[1]]['weight'] = len(life_time_weight) / sum(life_time_weight)
-                net[edge[0]][edge[1]]['weight'] = (len(self.logi_key_pool[edge]) * 1) / sum(self.logi_key_pool[edge])
+                net[edge[0]][edge[1]]['weight'] = len(life_time_weight) / sum(life_time_weight)
+                # net[edge[0]][edge[1]]['weight'] = (len(self.logi_key_pool[edge]) * 1) / sum(self.logi_key_pool[edge])
             elif sum(life_time_weight) == 0:
                 net[edge[0]][edge[1]]['weight'] = 0.0
-
-    def calculate_based_num_key_weight(self, net):
-        for edge in net.edges:
-            life_time_weight = []
-            for key_life in self.key_pool[edge]:
-                life_time_weight.append(1)
-            if sum(life_time_weight) != 0:
-                # net[edge[0]][edge[1]]['weight'] = len(life_time_weight) / sum(life_time_weight)
-                net[edge[0]][edge[1]]['weight'] = 1 / sum(self.key_pool[edge])
-            elif sum(life_time_weight) == 0:
-                net[edge[0]][edge[1]]['weight'] = 0.0
-
-    def find_k_shortest_path(self):
-        copied_G = copy.deepcopy(self.G)
-        subnet = nx.subgraph_view(
-            copied_G,
-            filter_edge=lambda node_1_id, node_2_id: \
-                True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
-        )
-        # subnet = nx.subgraph_view(
-        #     copied_G,
-        #     filter_edge=lambda node_1_id, node_2_id: \
-        #         True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size and
-        #                 copied_G.edges[(node_1_id, node_2_id)]['num_channel'] > 0 else False
-        # )
-        paths = []
-        if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
-            for _ in range(self.k):
-                paths.append([])
-            routing_path = paths
-            return routing_path
-
-        # routing_path = nx.shortest_path(subnet, 0, 5)
-        for edge in subnet.edges:
-            subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
-        # paths = list(nx.shortest_simple_paths(subnet, self.source_node, self.target_node, 'weight'))
-        # paths = list(nx.all_shortest_paths(subnet, self.source_node, self.target_node, 'weight'))
-        paths = list(nx.all_shortest_paths(subnet, self.source_node, self.target_node))
-
-        if len(paths) < self.k:
-            for _ in range(self.k - len(paths)):
-                paths.append([])
-        routing_path = paths[:self.k]
-
-        return routing_path
 
     def find_routing_path(self):
         accumulate_qber = []
@@ -547,26 +481,12 @@ class QuantumEnvironment:
                 filter_edge=lambda node_1_id, node_2_id: \
                     True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
             )
+
             if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
                 return []
 
             # routing_path = nx.shortest_path(subnet, 0, 5)
-            for edge in subnet.edges:
-                subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
             routing_path = nx.shortest_path(subnet, self.source_node, self.target_node)
-            # copied_G = copy.deepcopy(self.G)
-            # subnet = nx.subgraph_view(
-            #     copied_G,
-            #     filter_edge=lambda node_1_id, node_2_id: \
-            #         True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
-            # )
-            # if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
-            #     return []
-            #
-            # # routing_path = nx.shortest_path(subnet, 0, 5)
-            # for edge in subnet.edges:
-            #     subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
-            # routing_path = nx.astar_path(subnet, self.source_node, self.target_node, None, 'weight')
 
         if self.metric_type == 'weighted_shortest':
             copied_G = copy.deepcopy(self.logi_G)
@@ -605,102 +525,39 @@ class QuantumEnvironment:
 
             routing_path = nx.shortest_path(subnet, self.source_node, self.target_node, 'weight')
 
-        # Using QBER
-        if self.metric_type == 'qber':
-            # shortest_routing_path = self.temp_shrotest_path(self.source_node, self.target_node, 'weight')
-            while self.source_node != self.target_node:
-                neighbor_nodes = [node for node in self.G.neighbors(self.source_node) if
-                                  self.G[self.source_node][node]['num_key'] > 0 and
-                                  self.G[self.source_node][node]['num_key'] >= self.consume_key_size]
-                neighbor_nodes = [node for node in neighbor_nodes if node not in routing_path]  # check in routing path
-                neighbor_nodes = [node for node in neighbor_nodes if node not in loop_nodes]  # check the loop
+        return routing_path
 
-                if len(neighbor_nodes) == 0 and len(accumulate_count_rate) > 0:
-                    loop_nodes.append(self.source_node)
-                    routing_path.pop()
-                    accumulate_qber.pop()
-                    accumulate_count_rate.pop()
-                    self.source_node = routing_path[-1]
-                    continue
+    def find_k_shortest_path(self):
+        copied_G = copy.deepcopy(self.G)
+        subnet = nx.subgraph_view(
+            copied_G,
+            filter_edge=lambda node_1_id, node_2_id: \
+                True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size else False
+        )
+        # subnet = nx.subgraph_view(
+        #     copied_G,
+        #     filter_edge=lambda node_1_id, node_2_id: \
+        #         True if copied_G.edges[(node_1_id, node_2_id)]['num_key'] >= self.consume_key_size and
+        #                 copied_G.edges[(node_1_id, node_2_id)]['num_channel'] > 0 else False
+        # )
+        paths = []
+        if len(subnet.edges) == 0 or not nx.has_path(subnet, source=self.source_node, target=self.target_node):
+            for _ in range(self.k):
+                paths.append([])
+            routing_path = paths
+            return routing_path
 
-                elif len(neighbor_nodes) == 0 and len(accumulate_count_rate) == 0:
-                    return []
+        # routing_path = nx.shortest_path(subnet, 0, 5)
+        for edge in subnet.edges:
+            subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
+        # paths = list(nx.shortest_simple_paths(subnet, self.source_node, self.target_node, 'weight'))
+        # paths = list(nx.all_shortest_paths(subnet, self.source_node, self.target_node, 'weight'))
+        paths = list(nx.all_shortest_paths(subnet, self.source_node, self.target_node))
 
-                selected_node = self.select_next_node(neighbor_nodes, accumulate_qber, accumulate_num_key, accumulate_count_rate)
-                routing_path.append(selected_node)
-                self.source_node = selected_node
-
-            # if len(shortest_routing_path) != 0 and len(shortest_routing_path) * 2 <= len(routing_path):
-            #     routing_path = shortest_routing_path
-
-        # Using Num_key
-        if self.metric_type == 'num_key':
-            # shortest_routing_path = self.temp_shrotest_path(self.source_node, self.target_node, 'weight')
-            while self.source_node != self.target_node:
-                neighbor_nodes = [node for node in self.G.neighbors(self.source_node) if
-                                  self.G[self.source_node][node]['num_key'] > 0 and
-                                  self.G[self.source_node][node]['num_key'] >= self.consume_key_size]
-                neighbor_nodes = [node for node in neighbor_nodes if node not in routing_path]  # check in routing path
-                neighbor_nodes = [node for node in neighbor_nodes if node not in loop_nodes]  # check the loop
-
-                if len(neighbor_nodes) == 0 and len(accumulate_count_rate) > 0:
-                    loop_nodes.append(self.source_node)
-                    routing_path.pop()
-                    accumulate_num_key.pop()
-                    accumulate_count_rate.pop()
-                    self.source_node = routing_path[-1]
-                    continue
-
-                elif len(neighbor_nodes) == 0 and len(accumulate_count_rate) == 0:
-                    return []
-
-                selected_node = self.select_next_node(self.source_node, neighbor_nodes, accumulate_qber, accumulate_num_key, accumulate_count_rate)
-                routing_path.append(selected_node)
-                self.source_node = selected_node
-
-            # if len(shortest_routing_path) != 0 and len(shortest_routing_path) * 2 <= len(routing_path):
-            #     routing_path = shortest_routing_path
-
-        # Using QBER + Num_key
-        if self.metric_type == 'combination':
-            # shortest_routing_path = self.temp_shrotest_path(self.source_node, self.target_node, 'weight')
-            while self.source_node != self.target_node:
-                neighbor_nodes = [node for node in self.G.neighbors(self.source_node) if
-                                  self.G[self.source_node][node]['num_key'] > 0 and
-                                  self.G[self.source_node][node]['num_key'] >= self.consume_key_size]
-                neighbor_nodes = [node for node in neighbor_nodes if node not in routing_path]  # check in routing path
-                neighbor_nodes = [node for node in neighbor_nodes if node not in loop_nodes]  # check the loop
-
-                if len(neighbor_nodes) == 0 and len(accumulate_count_rate) > 0:
-                    loop_nodes.append(self.source_node)
-                    routing_path.pop()
-                    accumulate_qber.pop()
-                    accumulate_num_key.pop()
-                    accumulate_count_rate.pop()
-                    self.source_node = routing_path[-1]
-                    continue
-
-                elif len(neighbor_nodes) == 0 and len(accumulate_count_rate) == 0:
-                    return []
-
-                selected_node = self.select_next_node(
-                    self.source_node, neighbor_nodes,
-                    accumulate_qber, accumulate_num_key, accumulate_count_rate
-                )
-                routing_path.append(selected_node)
-                self.source_node = selected_node
-
-            # print("!!!!!!!!!!", len(routing_path), routing_path, len(shortest_routing_path), shortest_routing_path)
-            # if len(shortest_routing_path) != 0 and len(shortest_routing_path) * 2 <= len(routing_path):
-            #     routing_path = shortest_routing_path
-            #     self.count += 1
-            # print(self.count)
-
-        # if self.metric_type == 'combination':
-        #     print("Final routing path: ", routing_path)
-        # Consumed quantum key
-
-        # self.apply_routing_path(routing_path)
+        if len(paths) < self.k:
+            for _ in range(self.k - len(paths)):
+                paths.append([])
+        routing_path = paths[:self.k]
 
         return routing_path
 
@@ -742,19 +599,10 @@ class QuantumEnvironment:
         return routing_path
 
     def apply_routing_path(self, routing_path):
-        if self.proactive:
-            graph = self.logi_G
-            key_pool = self.logi_key_pool
-        else:
-            graph = self.expand_G
-            key_pool = self.expand_key_pool
         for i in range(len(routing_path) - 1):
-            if routing_path[i] < routing_path[i+1]:
-                graph[routing_path[i]][routing_path[i+1]]['num_key'] -= self.consume_key_size
-                key_pool[(routing_path[i], routing_path[i+1])] = key_pool[(routing_path[i], routing_path[i+1])][self.consume_key_size:]
-            else:
-                graph[routing_path[i+1]][routing_path[i]]['num_key'] -= self.consume_key_size
-                key_pool[(routing_path[i+1], routing_path[i])] = key_pool[(routing_path[i+1], routing_path[i])][self.consume_key_size:]
+            sorted_key = tuple(sorted((routing_path[i], routing_path[i + 1])))
+            self.logi_G[sorted_key[0]][sorted_key[1]]['num_key'] -= self.consume_key_size
+            self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
 
     def select_next_node(self, neighbor_nodes, accumulate_qber, accumulate_num_key, accumulate_count_rate):
         current_edges = list(self.G.edges(self.source_node))
@@ -846,12 +694,13 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    env = QuantumEnvironment(topology_type='BUTTERFLY')
-    max_time_step = 500    # 1_000
+    env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
+    max_time_step = 1_000    # 1_000
     threshold = 10
     proactive = False
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 1
-    seed = 3
+    seed = 0
     action = []
 
     weighted_shortest_reward, shortest_reward, qber_reward, num_key_reward, combination_reward = 0, 0, 0, 0, 0
@@ -865,7 +714,7 @@ if __name__ == "__main__":
     env.metric_type = 'simple_shortest'
     # env.plot_topology()
     for _ in range(num_simulation):
-        env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, threshold=threshold)
+        env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, shortest_reward, _, _, info = env.step(action)
         shortest_average_reward += shortest_reward
@@ -887,7 +736,7 @@ if __name__ == "__main__":
     env.metric_type = 'weighted_shortest'
     # env.plot_topology()
     for _ in range(num_simulation):
-        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, threshold=threshold)
+        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, weighted_shortest_reward, _, _, info = env.step(action)
         weighted_shortest_average_reward += weighted_shortest_reward
@@ -907,10 +756,10 @@ if __name__ == "__main__":
 
     # QBER simulation
     env.metric_type = 'weighted_life_shortest'
-    env.plot_topology()
-    env.plot_expand_topology()
+    # env.plot_topology()
+    # env.plot_expand_topology()
     for _ in range(num_simulation):
-        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, threshold=threshold)
+        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, qber_reward, _, _, info = env.step(action)
         qber_average_reward += qber_reward
@@ -984,8 +833,9 @@ if __name__ == "__main__":
     print("Average Results:")
     print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Used percentage':<20}{'Average delay':<20}")
     print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{(shortest_average_used_keys/shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay/max_time_step}ms")
-    print(f"{'weighted_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step}ms")
-    print(f"{'life_time_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step}ms")
+    print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step}ms")
+    print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step}ms")
+
     # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
     # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
