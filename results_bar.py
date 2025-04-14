@@ -42,12 +42,12 @@ import matplotlib.pyplot as plt
 # 데이터 생성
 # categories = ['Simple SP', 'Weighted SP', 'Lifetime-aware SP']
 categories = ['Shortest path \n key relay', 'Weighted shortest \n path key relay', 'Lifetime-aware \n key relay']
-values3 = [778, 782, 794]  # 세 번째 데이터
-values2 = [588, 599, 587]
+# values3 = [804, 820, 797]  # 세 번째 데이터
+# values2 = [399, 403, 401]
 # values1 = np.arange(0, 10, 1)
 
-# values3 = [774.18, 811.8, 928.08]  # 세 번째 데이터
-# values2 = [253.96, 274.64, 274.82]
+values3 = [267.66, 277.1, 275.26]  # 세 번째 데이터
+values2 = [70.48, 73.14, 76.28]
 # values1 = [53.86, 64.11]
 
 x = np.arange(len(categories))  # X축 위치
@@ -68,8 +68,8 @@ ax.set_xticks(x)
 ax.set_xticklabels(categories, fontsize=30) # , rotation=45
 
 # Y축 설정 (오른쪽 Y축 제거)
-ax.set_ylabel('The number of service provision', fontsize=30)
-# ax.set_ylabel('Average delay', fontsize=30)
+# ax.set_ylabel('The number of service provision', fontsize=30)
+ax.set_ylabel('Average delay', fontsize=30)
 # ax.yaxis.set_label_position("left")  # Y축을 왼쪽으로 설정 (기본값)
 # ax.yaxis.tick_left()  # 왼쪽 Y축만 사용
 ax.tick_params(axis='y', labelsize=30, direction='in', length=30)

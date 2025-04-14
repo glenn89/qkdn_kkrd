@@ -59,6 +59,8 @@ class QuantumEnvironment:
 
         self.session_blocking = 0
         self.total_generation_keys = 0
+        self.logical_key_generation = 0
+        self.logical_key_consume = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.delay = 0
@@ -80,8 +82,8 @@ class QuantumEnvironment:
         # nx.relabel_nodes(self.G, self.topology_conf['QKD_NODES_NAME'])
 
         edges = []
-        node_1 = np.where(np.array(self.topology_conf['QKD_TOPOLOGY']) == 1)[0]
-        node_2 = np.where(np.array(self.topology_conf['QKD_TOPOLOGY']) == 1)[1]
+        node_1 = np.where(np.array(self.topology_conf['QKD_TOPOLOGY']) > 0)[0]
+        node_2 = np.where(np.array(self.topology_conf['QKD_TOPOLOGY']) > 0)[1]
 
         for (i, j) in zip(node_1, node_2):
             edges.append((i, j))
@@ -92,9 +94,17 @@ class QuantumEnvironment:
             (edges[n][0], edges[n][1]): {
                 "weight": self.topology_conf['num_key'][n],
                 "num_key": self.topology_conf['num_key'][n],
+                "distance": self.topology_conf['num_key'][n],
             } for n in range(len(edges))
         }
         nx.set_edge_attributes(self.G, edges_attribute)
+        if self.topology_conf['NAME'] == 'NSFNET':
+            for i in range(len(self.G.nodes)):
+                for j in range(i + 1, len(self.G.nodes)):  # 대칭 행렬이므로 i < j
+                    distance = self.topology_conf['QKD_TOPOLOGY_DISTANCE'][i][j]
+                    if distance > 0:  # 가중치가 0이 아닌 경우만 추가
+                        self.G.add_edge(i, j, distance=distance)
+
         self.key_pool.update((key, []) for key in self.G.edges)  # Generate key pool
         self.logi_key_pool.update((key, []) for key in self.G.edges)
         self.logi_G_edges = nx.to_numpy_array(self.G, weight='num_key')
@@ -104,31 +114,54 @@ class QuantumEnvironment:
         self.expand_G = copy.deepcopy(self.G)
         next_node_id = len(self.expand_G.nodes) + 1
         edges = list(self.expand_G.edges(data=True))
-
         for u, v, attr in edges:
-            # 기존 엣지 중간에 두 개의 노드를 추가
-            new_node1 = next_node_id
-            new_node2 = next_node_id + 1
-            next_node_id += 2
+            if self.topology_conf['NAME'] != 'NSFNET':
+                # 기존 엣지 중간에 두 개의 노드를 추가
+                new_node1 = next_node_id
+                new_node2 = next_node_id + 1
+                next_node_id += 2
 
-            # 새 노드 추가
-            self.expand_G.add_node(new_node1, city=f"Node {new_node1}")
-            self.expand_G.add_node(new_node2, city=f"Node {new_node2}")
+                # 새 노드 추가
+                self.expand_G.add_node(new_node1, city=f"Node {new_node1}")
+                self.expand_G.add_node(new_node2, city=f"Node {new_node2}")
 
-            # 엣지 추가
-            num_key = attr["num_key"]
-            self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key)
-            self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key)
-            self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key)
+                # 엣지 추가
+                num_key = attr["num_key"]
+                self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key)
+                self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key)
+                self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key)
 
-            # 기존 엣지 제거
-            self.expand_G.remove_edge(u, v)
+                # 기존 엣지 제거
+                self.expand_G.remove_edge(u, v)
+            elif self.topology_conf['NAME'] == 'NSFNET':
+                num_intermediates = int(attr['distance'] / 200)
+                path_nodes = [u]
+
+                # n개의 중간 노드 생성
+                for _ in range(num_intermediates):
+                    new_node = next_node_id
+                    self.expand_G.add_node(new_node, city=f"Node {new_node}")
+                    path_nodes.append(new_node)
+                    next_node_id += 1
+
+                path_nodes.append(v)
+
+                # 기존 엣지 제거
+                self.expand_G.remove_edge(u, v)
+
+                # 새로 생성된 경로로 edge 연결
+                num_key = attr["num_key"]
+                for i in range(len(path_nodes) - 1):
+                    n1, n2 = path_nodes[i], path_nodes[i + 1]
+                    self.expand_G.add_edge(n1, n2, weight=num_key, num_key=num_key)
 
         self.expand_key_pool.update((key, []) for key in self.expand_G.edges)  # Generate expand key pool
         for edge in self.expand_G.edges:
             self.logi_G.add_edge(edge[0], edge[1], weight=0, num_key=0)
         self.logi_key_pool.update({edge: [] for edge in self.expand_key_pool if edge not in self.logi_key_pool})  # generate logical key pool
 
+        # for edge in self.logi_G.edges:
+        #     print(edge)
         # self.G의 논리적 edge 추가
         all_possible_edges = list(combinations(self.G.nodes, 2))
         for u, v in all_possible_edges:
@@ -143,15 +176,16 @@ class QuantumEnvironment:
     # next state로 활용 하면 좋을 것 같음
     def update_logical_topology(self):
         max_lifetime = self.key_life_time
-        if self.proactive_type == '1-hop':
-            G_edges = self.G.edges
-        elif self.proactive_type == 'n-hop':
+        G_edges = self.G.edges
+
+        if self.proactive_type == 'n-hop':
             G_edges = list(combinations(self.G.nodes, 2))
         for edge in G_edges:
             min_lifetime = self.key_life_time
             path = nx.shortest_path(self.expand_G, edge[0], edge[1])
             if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                 continue
+
             # path 경로 내의 가장 낮은 lifetime 찾기
             # 먼저 min_lifetime 계산
             for i in range(len(path) - 1):
@@ -159,16 +193,16 @@ class QuantumEnvironment:
                 if len(self.expand_key_pool[sorted_key]) > 0:
                     min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
 
-            # 그 다음에 키 소비
-            for i in range(len(path) - 1):
-                sorted_key = tuple(sorted((path[i], path[i + 1])))
-                self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
-                self.used_keys += self.consume_key_size
-                self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
-
             if max_lifetime - min_lifetime < self.lifetime_threshold:
+                self.logical_key_generation += 1
+                # 그 다음에 키 소비
+                for i in range(len(path) - 1):
+                    sorted_key = tuple(sorted((path[i], path[i + 1])))
+                    self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                    self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
+                    self.used_keys += self.consume_key_size
+                    self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                    self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
                 if edge in self.logi_key_pool:
                     self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
                     self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
@@ -183,7 +217,7 @@ class QuantumEnvironment:
         # Generate key with qber
         for edge in edges:
             ######### Apply static generated key #########
-            generated_keys = int(np.random.normal(loc=self.generate_key_size, scale=2, size=1))
+            generated_keys = int(np.random.normal(loc=self.generate_key_size, scale=1, size=1))
             self.total_generation_keys += generated_keys
             # print("Gen key: ", generated_keys)
             if generated_keys < 0:
@@ -197,7 +231,7 @@ class QuantumEnvironment:
                 self.logi_key_pool[edge].append(self.key_life_time)
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
-            self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
+            self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
 
     def plot_topology(self):
         edge_labels = {}
@@ -238,14 +272,14 @@ class QuantumEnvironment:
         plt.show()
 
     def reset(self, seed, max_time_step, proactive, proactive_type, threshold):
-        self.num_seed = 1
+        self.num_seed = seed
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 15
-        self.generate_key_size = 6
-        self.lifetime_threshold = 10
-        self.proactive = False
+        self.generate_key_size = 5
+        self.lifetime_threshold = threshold
+        self.proactive = proactive
         self.proactive_type = '1-hop'
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
         self.init_num_channel = 3
@@ -264,6 +298,8 @@ class QuantumEnvironment:
         self.time_step = 0
         self.session_blocking = 0
         self.total_generation_keys = 0
+        self.logical_key_generation = 0
+        self.logical_key_consume = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.delay = 0
@@ -325,14 +361,7 @@ class QuantumEnvironment:
             routing_path = self.find_routing_path()
             # print("time step: ", self.time_step, "routing path: ", routing_path)
             self.apply_routing_path(routing_path)
-            # print("11111111111111111111111111111111111111")
-            # print("timestep: ", self.time_step, "routing path: ", routing_path)
-            # print(self.expand_key_pool)
-            # print(self.logi_key_pool)
-            # print(self.logi_G.edges(data=True))
-            # print()
-            # if self.metric_type == 'num_key':
-            # self.plot_topology()
+
             if not routing_path:
                 self.session_blocking -= 1
             else:
@@ -347,10 +376,12 @@ class QuantumEnvironment:
                             delay += 40
                         elif node in self.expand_G.nodes and node not in self.G.nodes:
                             delay += 20
-                    self.delay += delay + 20
+                    delay += 20
+                    self.delay += delay
                 else:
+                    delay += 20
                     self.delay += 20
-                print("timestep: ", self.time_step, "path: ", routing_path, self.delay)
+                # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", delay)
 
             # self.source_node, self.target_node = 1, 9
             # self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
@@ -363,19 +394,14 @@ class QuantumEnvironment:
 
         for u, v, attr in self.logi_G.edges(data=True):
             self.remaining_keys += attr['num_key']
-            if (u, v) in self.expand_G.edges:
-                self.expand_key_pool[(u, v)] = [life - 1 for life in self.expand_key_pool[(u, v)]] # lifetime -1
-                self.expand_key_pool[(u, v)] = [life for life in self.expand_key_pool[(u, v)] if life >= 1] # remove expired key
-                self.expand_G.edges[(u, v)]['num_key'] = len(self.expand_key_pool[(u, v)])
-            self.logi_key_pool[(u, v)] = [life - 1 for life in self.logi_key_pool[(u, v)]]  # lifetime -1
-            self.logi_key_pool[(u, v)] = [life for life in self.logi_key_pool[(u, v)] if life >= 1]  # remove expired key
-            self.logi_G.edges[(u, v)]['num_key'] = len(self.logi_key_pool[(u, v)])
-
-
-        # print(self.expand_G.edges(data=True))
-        # print(self.logi_G.edges(data=True))
-        # print("22222222222222222222222222222222222222222")
-        # print()
+            sorted_key = tuple(sorted((u, v)))
+            if sorted_key in self.expand_G.edges:
+                self.expand_key_pool[sorted_key] = [life - 1 for life in self.expand_key_pool[sorted_key]] # lifetime -1
+                self.expand_key_pool[sorted_key] = [life for life in self.expand_key_pool[sorted_key] if life >= 1] # remove expired key
+                self.expand_G.edges[sorted_key]['num_key'] = len(self.expand_key_pool[sorted_key])
+            self.logi_key_pool[sorted_key] = [life - 1 for life in self.logi_key_pool[sorted_key]]  # lifetime -1
+            self.logi_key_pool[sorted_key] = [life for life in self.logi_key_pool[sorted_key] if life >= 1]  # remove expired key
+            self.logi_G.edges[sorted_key]['num_key'] = len(self.logi_key_pool[sorted_key])
 
         if self.time_step != 0 and self.time_step % self.generate_key_time_slot == 0:
             self.key_generation()
@@ -446,22 +472,6 @@ class QuantumEnvironment:
         state['flat_paths'] = state['flat_paths'][np.newaxis, :]
 
         return state
-
-    def calculate_based_lifetime_weight(self, net):
-        for edge in net.edges:
-            life_time_weight = []
-            for key_life in self.logi_key_pool[edge]:
-                if key_life <= self.key_life_time * 0.1:
-                    life_time_weight.append(1000)
-                elif key_life <= self.key_life_time * 0.5:
-                    life_time_weight.append(100)
-                else:
-                    life_time_weight.append(1)
-            if sum(life_time_weight) != 0:
-                net[edge[0]][edge[1]]['weight'] = len(life_time_weight) / sum(life_time_weight)
-                # net[edge[0]][edge[1]]['weight'] = (len(self.logi_key_pool[edge]) * 1) / sum(self.logi_key_pool[edge])
-            elif sum(life_time_weight) == 0:
-                net[edge[0]][edge[1]]['weight'] = 0.0
 
     def find_routing_path(self):
         accumulate_qber = []
@@ -603,6 +613,11 @@ class QuantumEnvironment:
             sorted_key = tuple(sorted((routing_path[i], routing_path[i + 1])))
             self.logi_G[sorted_key[0]][sorted_key[1]]['num_key'] -= self.consume_key_size
             self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+            if sorted_key in self.G.edges:
+                self.logical_key_consume += 1
+            if len(self.logi_key_pool[sorted_key]) != self.logi_G[sorted_key[0]][sorted_key[1]]['num_key']:
+                print("!!!!!!!!!!!!!!!!!!!!!", sorted_key)
+                print(len(self.logi_key_pool[sorted_key]), self.logi_G[sorted_key[0]][sorted_key[1]]['num_key'])
 
     def select_next_node(self, neighbor_nodes, accumulate_qber, accumulate_num_key, accumulate_count_rate):
         current_edges = list(self.G.edges(self.source_node))
@@ -622,6 +637,24 @@ class QuantumEnvironment:
         accumulate_count_rate.append(self.G[self.source_node][min_weight_neighbor]['count_rate'])
 
         return min_weight_neighbor
+
+    def calculate_based_lifetime_weight(self, net):
+        for edge in net.edges:
+            sorted_key = tuple(sorted(edge))
+            life_time_weight = []
+            # for key_life in self.logi_key_pool[edge]:
+            #     if key_life <= self.key_life_time * 0.1:
+            #         life_time_weight.append(1000)
+            #     elif key_life <= self.key_life_time * 0.5:
+            #         life_time_weight.append(100)
+            #     else:
+            #         life_time_weight.append(1)
+            life_time_weight.append(min(self.logi_key_pool[sorted_key]))
+            if sum(life_time_weight) != 0:
+                net[sorted_key[0]][sorted_key[1]]['weight'] = 1 / sum(life_time_weight)
+                # net[edge[0]][edge[1]]['weight'] = (len(self.logi_key_pool[edge]) * 1) / sum(self.logi_key_pool[edge])
+            elif sum(life_time_weight) == 0:
+                net[sorted_key[0]][sorted_key[1]]['weight'] = 0.0
 
     def calculate_weight(self, edge, accumulate_qber, accumulate_num_key, accumulate_count_rate, current_qber, current_num_key, current_count_rate):
         weight = 0
@@ -660,48 +693,19 @@ class QuantumEnvironment:
                 # num_key_weight = numerator_sum / denominator_sum
             weight = num_key_weight
 
-        if self.metric_type == 'combination':
-            # Calculate QBER weight
-            if len(accumulate_count_rate) == 0:
-                qber_weight = (current_qber * current_count_rate) / current_count_rate
-            else:
-                for i in range(len(accumulate_qber)):
-                    numerator_sum += accumulate_qber[i] * accumulate_count_rate[i]
-                numerator_sum += current_qber * current_count_rate
-                denominator_sum = sum(accumulate_count_rate) + current_count_rate
-                qber_weight = numerator_sum / denominator_sum
-
-            # Calculate num_key weight
-            if current_num_key == 0:
-                current_num_key = 10000
-            else:
-                if edge[0] > edge[1]:
-                    edge = (edge[1], edge[0])
-                current_num_key = sum(self.cumulative_edge_keys[edge]) / len(self.cumulative_edge_keys[edge])
-            if len(accumulate_count_rate) == 0:
-                num_key_weight = 1 / current_num_key
-            else:
-                num_key_weight = 1 / current_num_key
-                # for i in range(len(accumulate_num_key)):
-                #     denominator_sum += accumulate_num_key[i]
-                # denominator_sum += current_num_key
-                # numerator_sum = current_num_key
-                # num_key_weight = numerator_sum / denominator_sum
-            weight = self.alpha * qber_weight + (1 - self.alpha) * num_key_weight
-            # print("!!!!!!!!!!!!!", self.alpha * qber_weight, (1 - self.alpha) * num_key_weight, weight)
-
         return weight
 
 
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
     max_time_step = 1_000    # 1_000
-    threshold = 10
-    proactive = False
+    threshold = 5             # 10
+    proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    num_simulation = 1
-    seed = 0
+    num_simulation = 5
+    seed = [0, 10, 20, 30, 40]  # 42
     action = []
+    sp_delay, wsp_delay, lsp_delay = [], [], []
 
     weighted_shortest_reward, shortest_reward, qber_reward, num_key_reward, combination_reward = 0, 0, 0, 0, 0
     weighted_shortest_average_reward, shortest_average_reward, qber_average_reward, num_key_average_reward, combination_average_reward = 0, 0, 0, 0, 0
@@ -713,8 +717,8 @@ if __name__ == "__main__":
     # Shortest path simulation
     env.metric_type = 'simple_shortest'
     # env.plot_topology()
-    for _ in range(num_simulation):
-        env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
+    for i in range(num_simulation):
+        env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, shortest_reward, _, _, info = env.step(action)
         shortest_average_reward += shortest_reward
@@ -723,20 +727,15 @@ if __name__ == "__main__":
         shortest_average_remaining_keys += info['remaining_keys']
         shortest_average_used_keys += info['used_keys']
         shortest_average_delay += info['delay']
-    shortest_average_reward /= num_simulation
-    shortest_average_session_blocking /= num_simulation
-    shortest_average_total_generation_keys /= num_simulation
-    shortest_average_remaining_keys /= num_simulation
-    shortest_average_used_keys /= num_simulation
-    shortest_average_delay /= num_simulation
+        print("SP: ", env.logical_key_generation, env.logical_key_consume)
     # env.plot_topology()
     # env.plot_heatmap()
 
     # Weighted shortest path simulation
     env.metric_type = 'weighted_shortest'
     # env.plot_topology()
-    for _ in range(num_simulation):
-        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
+    for i in range(num_simulation):
+        s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, weighted_shortest_reward, _, _, info = env.step(action)
         weighted_shortest_average_reward += weighted_shortest_reward
@@ -745,12 +744,8 @@ if __name__ == "__main__":
         weighted_shortest_average_remaining_keys += info['remaining_keys']
         weighted_shortest_average_used_keys += info['used_keys']
         weighted_shortest_average_delay += info['delay']
-    weighted_shortest_average_reward /= num_simulation
-    weighted_shortest_average_session_blocking /= num_simulation
-    weighted_shortest_average_total_generation_keys /= num_simulation
-    weighted_shortest_average_remaining_keys /= num_simulation
-    weighted_shortest_average_used_keys /= num_simulation
-    weighted_shortest_average_delay /= num_simulation
+        print("WSP: ", env.logical_key_generation, env.logical_key_consume)
+
     # env.plot_topology()
     # env.plot_heatmap()
 
@@ -758,8 +753,8 @@ if __name__ == "__main__":
     env.metric_type = 'weighted_life_shortest'
     # env.plot_topology()
     # env.plot_expand_topology()
-    for _ in range(num_simulation):
-        s, _ = env.reset(seed=seed, max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
+    for i in range(num_simulation):
+        s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
         for _ in range(max_time_step):
             _, qber_reward, _, _, info = env.step(action)
         qber_average_reward += qber_reward
@@ -768,62 +763,28 @@ if __name__ == "__main__":
         qber_average_remaining_keys += info['remaining_keys']
         qber_average_used_keys += info['used_keys']
         qber_average_delay += info['delay']
+        print("LSP: ", env.logical_key_generation, env.logical_key_consume)
+
+    shortest_average_reward /= num_simulation
+    shortest_average_session_blocking /= num_simulation
+    shortest_average_total_generation_keys /= num_simulation
+    shortest_average_remaining_keys /= num_simulation
+    shortest_average_used_keys /= num_simulation
+    shortest_average_delay /= num_simulation
+
+    weighted_shortest_average_reward /= num_simulation
+    weighted_shortest_average_session_blocking /= num_simulation
+    weighted_shortest_average_total_generation_keys /= num_simulation
+    weighted_shortest_average_remaining_keys /= num_simulation
+    weighted_shortest_average_used_keys /= num_simulation
+    weighted_shortest_average_delay /= num_simulation
+
     qber_average_reward /= num_simulation
     qber_average_session_blocking /= num_simulation
     qber_average_total_generation_keys /= num_simulation
     qber_average_remaining_keys /= num_simulation
     qber_average_used_keys /= num_simulation
     qber_average_delay /= num_simulation
-    # # env.plot_topology()
-    # # env.plot_heatmap()
-    #
-    # # Num keys simulation
-    # env.metric_type = 'num_key'
-    # env.reset(seed=seed, max_time_step=max_time_step, training=False)
-    # for _ in range(num_simulation):
-    #     env.reset(seed=seed, max_time_step=max_time_step, training=False)
-    #     for _ in range(max_time_step):
-    #         num_key_reward, info = env.step()
-    #     num_key_average_reward += num_key_reward
-    #     num_key_average_session_blocking += info['session_blocking']
-    #     num_key_average_total_generation_keys += info['total_generation_keys']
-    #     num_key_average_remaining_keys += info['remaining_keys']
-    #     num_key_average_used_keys += info['used_keys']
-    #     seed += 1
-    # num_key_average_reward /= num_simulation
-    # num_key_average_session_blocking /= num_simulation
-    # num_key_average_total_generation_keys /= num_simulation
-    # num_key_average_remaining_keys /= num_simulation
-    # num_key_average_used_keys /= num_simulation
-    # seed = 0
-    # # env.plot_topology()
-    # # env.plot_heatmap()
-    #
-    # # QBER + Num keys simulation
-    # env.metric_type = 'combination'
-    # env.reset(seed=seed, max_time_step=max_time_step, training=False)
-    # for _ in range(num_simulation):
-    #     env.reset(seed=seed, max_time_step=max_time_step, training=False)
-    #     for _ in range(max_time_step):
-    #         combination_reward, info = env.step()
-    #     combination_average_reward += combination_reward
-    #     combination_average_session_blocking += info['session_blocking']
-    #     combination_average_total_generation_keys += info['total_generation_keys']
-    #     combination_average_remaining_keys += info['remaining_keys']
-    #     combination_average_used_keys += info['used_keys']
-    #     seed += 1
-    # combination_average_reward /= num_simulation
-    # combination_average_session_blocking /= num_simulation
-    # combination_average_total_generation_keys /= num_simulation
-    # combination_average_remaining_keys /= num_simulation
-    # combination_average_used_keys /= num_simulation
-    # seed = 0
-    # env.plot_topology()
-    # env.plot_heatmap()
-
-    # print("QBER results: ", qber_reward, qber_session_blocking)
-    # print("Num keys results: ", num_key_reward, num_key_session_blocking)
-    # print("QBER + Num keys results: ", combination_reward, combination_session_blocking)
 
     # Print the results in a tabular format
     print("Simulation information")
