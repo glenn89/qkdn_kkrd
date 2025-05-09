@@ -35,6 +35,7 @@ class QuantumEnvironment:
         self.proactive_type = None
 
         self.generate_key_size = 0
+        self.generate_key_scale = 0
         self.generate_key_time_slot = 0
         self.consume_key_size = 2
         self.consume_mean = 0
@@ -63,6 +64,7 @@ class QuantumEnvironment:
         self.logical_key_consume = 0
         self.remaining_keys = 0
         self.used_keys = 0
+        self.expired_keys = 0
         self.delay = 0
 
         self.k = 0
@@ -134,7 +136,7 @@ class QuantumEnvironment:
                 # 기존 엣지 제거
                 self.expand_G.remove_edge(u, v)
             elif self.topology_conf['NAME'] == 'NSFNET':
-                num_intermediates = int(attr['distance'] / 200)
+                num_intermediates = int(attr['distance'] / 100)
                 path_nodes = [u]
 
                 # n개의 중간 노드 생성
@@ -175,13 +177,14 @@ class QuantumEnvironment:
     # source, target node 추가하여 key pool 업데이트 및 logical graph 만들기
     # next state로 활용 하면 좋을 것 같음
     def update_logical_topology(self):
-        max_lifetime = self.key_life_time
+        max_lifetime, min_lifetime = 0, 0
         G_edges = self.G.edges
 
         if self.proactive_type == 'n-hop':
             G_edges = list(combinations(self.G.nodes, 2))
         for edge in G_edges:
             min_lifetime = self.key_life_time
+            max_lifetime = 0  # 0
             path = nx.shortest_path(self.expand_G, edge[0], edge[1])
             if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                 continue
@@ -192,6 +195,7 @@ class QuantumEnvironment:
                 sorted_key = tuple(sorted((path[i], path[i + 1])))
                 if len(self.expand_key_pool[sorted_key]) > 0:
                     min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
+                    max_lifetime = max(max_lifetime, self.expand_key_pool[sorted_key][-1])
 
             if max_lifetime - min_lifetime < self.lifetime_threshold:
                 self.logical_key_generation += 1
@@ -217,7 +221,7 @@ class QuantumEnvironment:
         # Generate key with qber
         for edge in edges:
             ######### Apply static generated key #########
-            generated_keys = int(np.random.normal(loc=self.generate_key_size, scale=1, size=1))
+            generated_keys = int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1))
             self.total_generation_keys += generated_keys
             # print("Gen key: ", generated_keys)
             if generated_keys < 0:
@@ -229,6 +233,8 @@ class QuantumEnvironment:
                     self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
                 self.expand_key_pool[edge].append(self.key_life_time)
                 self.logi_key_pool[edge].append(self.key_life_time)
+                # self.expand_key_pool[edge].append(self.key_life_time + np.random.randint(-5, 6)) # Add lifetime noise
+                # self.logi_key_pool[edge].append(self.key_life_time + np.random.randint(-5, 6))
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
             self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
@@ -276,8 +282,9 @@ class QuantumEnvironment:
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
 
-        self.generate_key_time_slot = 15
-        self.generate_key_size = 5
+        self.generate_key_time_slot = 5
+        self.generate_key_size = 4
+        self.generate_key_scale = 2
         self.lifetime_threshold = threshold
         self.proactive = proactive
         self.proactive_type = '1-hop'
@@ -286,8 +293,8 @@ class QuantumEnvironment:
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 1
-        self.key_life_time = 20
+        self.num_request = 3
+        self.key_life_time = 10
         self.key_pool_size = 100_000
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -302,6 +309,7 @@ class QuantumEnvironment:
         self.logical_key_consume = 0
         self.remaining_keys = 0
         self.used_keys = 0
+        self.expired_keys = 0
         self.delay = 0
         self.k = 5
         self.reward = 0
@@ -336,6 +344,8 @@ class QuantumEnvironment:
         done = False
         truncated = False
         next_state = {}
+        num_request = 1
+
         if self.topology_conf['NAME'] == 'SIMPLE':
             self.source_node, self.target_node = 0, 3
         # else:
@@ -355,7 +365,12 @@ class QuantumEnvironment:
         #     # self.num_request = np.random.pareto(4, 1).astype(int)[0] * 5
         #     # self.num_request = np.random.randint(1, 2, 1)[0]
 
-        for _ in range(self.num_request):
+        step_delay = 0
+        success_request = 0
+        num_request = int(np.random.normal(loc=self.num_request, scale=1, size=1))
+        for _ in range(num_request):
+            self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
+                                                                  size=2, replace=False)
             if self.proactive:
                 self.update_logical_topology()
             routing_path = self.find_routing_path()
@@ -365,6 +380,7 @@ class QuantumEnvironment:
             if not routing_path:
                 self.session_blocking -= 1
             else:
+                success_request += 1
                 self.reward += 1
                 delay = 0
                 if len(routing_path) > 2:
@@ -377,11 +393,13 @@ class QuantumEnvironment:
                         elif node in self.expand_G.nodes and node not in self.G.nodes:
                             delay += 20
                     delay += 20
-                    self.delay += delay
+                    step_delay += delay
                 else:
                     delay += 20
-                    self.delay += 20
-                # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", delay)
+                    step_delay += delay
+                # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", step_delay)
+        self.delay += step_delay / success_request if num_request > 0 and step_delay > 0 else step_delay
+        # print("timestep: ", self.time_step, "num request: ", num_request, "delay: ", self.delay)
 
             # self.source_node, self.target_node = 1, 9
             # self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
@@ -399,16 +417,18 @@ class QuantumEnvironment:
                 self.expand_key_pool[sorted_key] = [life - 1 for life in self.expand_key_pool[sorted_key]] # lifetime -1
                 self.expand_key_pool[sorted_key] = [life for life in self.expand_key_pool[sorted_key] if life >= 1] # remove expired key
                 self.expand_G.edges[sorted_key]['num_key'] = len(self.expand_key_pool[sorted_key])
+            original_len_logi = len(self.logi_key_pool[sorted_key])
             self.logi_key_pool[sorted_key] = [life - 1 for life in self.logi_key_pool[sorted_key]]  # lifetime -1
             self.logi_key_pool[sorted_key] = [life for life in self.logi_key_pool[sorted_key] if life >= 1]  # remove expired key
             self.logi_G.edges[sorted_key]['num_key'] = len(self.logi_key_pool[sorted_key])
+            self.expired_keys += original_len_logi - len(self.logi_key_pool[sorted_key])
 
         if self.time_step != 0 and self.time_step % self.generate_key_time_slot == 0:
             self.key_generation()
             # print(self.G.edges(data=True))
         # print(self.metric_type, self.G.edges(data=True))
 
-        self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
+        # self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
         # self.source_node, self.target_node = 0, self.topology_conf['NUM_QKD_NODE'] - 1
 
         self.time_step += 1
@@ -418,6 +438,7 @@ class QuantumEnvironment:
             'total_generation_keys': self.total_generation_keys,
             'remaining_keys': self.remaining_keys,
             'used_keys': self.used_keys,
+            'expired_keys': self.expired_keys,
             'graph': self.G,
             'delay': self.delay
         }
@@ -699,7 +720,7 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
     max_time_step = 1_000    # 1_000
-    threshold = 5             # 10
+    threshold = 13            # 10
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 5
@@ -713,6 +734,7 @@ if __name__ == "__main__":
     weighted_shortest_average_total_generation_keys, shortest_average_total_generation_keys, qber_average_total_generation_keys, num_key_average_total_generation_keys, combination_average_total_generation_keys = 0, 0, 0, 0, 0
     weighted_shortest_average_remaining_keys, shortest_average_remaining_keys, qber_average_remaining_keys, num_key_average_remaining_keys, combination_average_remaining_keys = 0, 0, 0, 0, 0
     weighted_shortest_average_used_keys, shortest_average_used_keys, qber_average_used_keys, num_key_average_used_keys, combination_average_used_keys = 0, 0, 0, 0, 0
+    weighted_shortest_average_expired_keys, shortest_average_expired_keys, qber_average_expired_keys, num_key_average_expired_keys, combination_average_expired_keys = 0, 0, 0, 0, 0
     weighted_shortest_average_delay, shortest_average_delay, qber_average_delay = 0, 0, 0
     # Shortest path simulation
     env.metric_type = 'simple_shortest'
@@ -726,8 +748,10 @@ if __name__ == "__main__":
         shortest_average_total_generation_keys += info['total_generation_keys']
         shortest_average_remaining_keys += info['remaining_keys']
         shortest_average_used_keys += info['used_keys']
+        shortest_average_expired_keys += info['expired_keys']
         shortest_average_delay += info['delay']
-        print("SP: ", env.logical_key_generation, env.logical_key_consume)
+        if proactive:
+            print("SP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
     # env.plot_topology()
     # env.plot_heatmap()
 
@@ -743,8 +767,10 @@ if __name__ == "__main__":
         weighted_shortest_average_total_generation_keys += info['total_generation_keys']
         weighted_shortest_average_remaining_keys += info['remaining_keys']
         weighted_shortest_average_used_keys += info['used_keys']
+        weighted_shortest_average_expired_keys += info['expired_keys']
         weighted_shortest_average_delay += info['delay']
-        print("WSP: ", env.logical_key_generation, env.logical_key_consume)
+        if proactive:
+            print("WSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
 
     # env.plot_topology()
     # env.plot_heatmap()
@@ -762,14 +788,17 @@ if __name__ == "__main__":
         qber_average_total_generation_keys += info['total_generation_keys']
         qber_average_remaining_keys += info['remaining_keys']
         qber_average_used_keys += info['used_keys']
+        qber_average_expired_keys += info['expired_keys']
         qber_average_delay += info['delay']
-        print("LSP: ", env.logical_key_generation, env.logical_key_consume)
+        if proactive:
+            print("LSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
 
     shortest_average_reward /= num_simulation
     shortest_average_session_blocking /= num_simulation
     shortest_average_total_generation_keys /= num_simulation
     shortest_average_remaining_keys /= num_simulation
     shortest_average_used_keys /= num_simulation
+    shortest_average_expired_keys /= num_simulation
     shortest_average_delay /= num_simulation
 
     weighted_shortest_average_reward /= num_simulation
@@ -777,6 +806,7 @@ if __name__ == "__main__":
     weighted_shortest_average_total_generation_keys /= num_simulation
     weighted_shortest_average_remaining_keys /= num_simulation
     weighted_shortest_average_used_keys /= num_simulation
+    weighted_shortest_average_expired_keys /= num_simulation
     weighted_shortest_average_delay /= num_simulation
 
     qber_average_reward /= num_simulation
@@ -784,6 +814,7 @@ if __name__ == "__main__":
     qber_average_total_generation_keys /= num_simulation
     qber_average_remaining_keys /= num_simulation
     qber_average_used_keys /= num_simulation
+    qber_average_expired_keys /= num_simulation
     qber_average_delay /= num_simulation
 
     # Print the results in a tabular format
@@ -792,10 +823,10 @@ if __name__ == "__main__":
     print("The number of simulation: ", num_simulation)
     print()
     print("Average Results:")
-    print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Used percentage':<20}{'Average delay':<20}")
-    print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{(shortest_average_used_keys/shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay/max_time_step}ms")
-    print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step}ms")
-    print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step}ms")
+    print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}")
+    print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys/shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay/max_time_step:<4.3f}ms")
+    print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms")
+    print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
 
     # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
     # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")

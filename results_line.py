@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # 데이터 생성
 # categories = ['Simple SP', 'Weighted SP', 'Lifetime-aware SP']
 categories = ['Shortest path \n key relay', 'Weighted shortest \n path key relay', 'Lifetime-aware \n key relay']
-values3 = [230,236,	254,	269,	288,	382,	396,	399,	399,	399,	399,	399,	399,	399]  # 세 번째 데이터
+values3 = [230, 236,	254,	269,	288,	382,	396,	399,	399,	399,	399,	399,	399,	399]  # 세 번째 데이터
 values2 = [226,	235,	252,	267,	286,	383,	402,	403,	403,	403,	403,	403,	403,	403]
 values1 = [226,	232,	252,	271,	288,	384,	397,	401,	401,	401,	401,	401,	401,	401]
 
