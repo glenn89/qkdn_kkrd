@@ -41,6 +41,7 @@ class QuantumEnvironment:
         self.consume_mean = 0
         self.consume_std_dev = 0
         self.num_request = 0
+        self.num_request_scale = 0
         self.init_qber = None
         self.init_num_channel = None
         self.key_pool_size = 0
@@ -221,7 +222,8 @@ class QuantumEnvironment:
         # Generate key with qber
         for edge in edges:
             ######### Apply static generated key #########
-            generated_keys = int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1))
+            # generated_keys = max(1, int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1)))
+            generated_keys = np.random.randint(0, self.generate_key_size)
             self.total_generation_keys += generated_keys
             # print("Gen key: ", generated_keys)
             if generated_keys < 0:
@@ -233,8 +235,6 @@ class QuantumEnvironment:
                     self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
                 self.expand_key_pool[edge].append(self.key_life_time)
                 self.logi_key_pool[edge].append(self.key_life_time)
-                # self.expand_key_pool[edge].append(self.key_life_time + np.random.randint(-5, 6)) # Add lifetime noise
-                # self.logi_key_pool[edge].append(self.key_life_time + np.random.randint(-5, 6))
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
             self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
@@ -282,9 +282,9 @@ class QuantumEnvironment:
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
 
-        self.generate_key_time_slot = 5
+        self.generate_key_time_slot = 3
         self.generate_key_size = 4
-        self.generate_key_scale = 2
+        self.generate_key_scale = 1
         self.lifetime_threshold = threshold
         self.proactive = proactive
         self.proactive_type = '1-hop'
@@ -293,7 +293,8 @@ class QuantumEnvironment:
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 3
+        self.num_request = 4
+        self.num_request_scale = 1
         self.key_life_time = 10
         self.key_pool_size = 100_000
         self.key_pool = {}
@@ -367,14 +368,15 @@ class QuantumEnvironment:
 
         step_delay = 0
         success_request = 0
-        num_request = int(np.random.normal(loc=self.num_request, scale=1, size=1))
+        # num_request = max(0, int(np.random.normal(loc=self.num_request, scale=self.num_request_scale, size=1)))
+        num_request = np.random.randint(0, self.num_request)
         for _ in range(num_request):
             self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
                                                                   size=2, replace=False)
             if self.proactive:
                 self.update_logical_topology()
             routing_path = self.find_routing_path()
-            # print("time step: ", self.time_step, "routing path: ", routing_path)
+            # print("time step: ", self.time_step, "routing path: ", routing_path, "node: ", self.source_node, self.target_node)
             self.apply_routing_path(routing_path)
 
             if not routing_path:
@@ -440,7 +442,7 @@ class QuantumEnvironment:
             'used_keys': self.used_keys,
             'expired_keys': self.expired_keys,
             'graph': self.G,
-            'delay': self.delay
+            'delay': self.delay,
         }
 
         # Check environment | reflect action | reduction resource
@@ -720,7 +722,7 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
     max_time_step = 1_000    # 1_000
-    threshold = 13            # 10
+    threshold = 8            # 10
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 5
@@ -750,8 +752,8 @@ if __name__ == "__main__":
         shortest_average_used_keys += info['used_keys']
         shortest_average_expired_keys += info['expired_keys']
         shortest_average_delay += info['delay']
-        if proactive:
-            print("SP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
+        # if proactive:
+        #     print("SP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
     # env.plot_topology()
     # env.plot_heatmap()
 
@@ -769,8 +771,8 @@ if __name__ == "__main__":
         weighted_shortest_average_used_keys += info['used_keys']
         weighted_shortest_average_expired_keys += info['expired_keys']
         weighted_shortest_average_delay += info['delay']
-        if proactive:
-            print("WSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
+        # if proactive:
+        #     print("WSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
 
     # env.plot_topology()
     # env.plot_heatmap()
@@ -790,8 +792,8 @@ if __name__ == "__main__":
         qber_average_used_keys += info['used_keys']
         qber_average_expired_keys += info['expired_keys']
         qber_average_delay += info['delay']
-        if proactive:
-            print("LSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
+        # if proactive:
+        #     print("LSP: ", env.logical_key_generation, env.logical_key_consume, (env.logical_key_consume / env.logical_key_generation) * 100)
 
     shortest_average_reward /= num_simulation
     shortest_average_session_blocking /= num_simulation
