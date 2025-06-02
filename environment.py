@@ -285,7 +285,7 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 3
-        self.generate_key_size = 3
+        self.generate_key_size = 5
         self.generate_key_scale = 2
         self.lifetime_threshold = threshold
         self.proactive = proactive
@@ -538,6 +538,8 @@ class QuantumEnvironment:
             for edge in subnet.edges:
                 subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
             routing_path = nx.shortest_path(subnet, self.source_node, self.target_node, 'weight')
+            # total_weight = sum(subnet[routing_path[i]][routing_path[i + 1]]['weight'] for i in range(len(routing_path) - 1))
+            # print(routing_path, total_weight)
 
         if self.metric_type == 'weighted_life_shortest':
             copied_G = copy.deepcopy(self.logi_G)
@@ -742,6 +744,9 @@ if __name__ == "__main__":
     weighted_shortest_average_expired_keys, shortest_average_expired_keys, qber_average_expired_keys, num_key_average_expired_keys, combination_average_expired_keys = 0, 0, 0, 0, 0
     weighted_shortest_average_delay, shortest_average_delay, qber_average_delay = 0, 0, 0
     weighted_shortest_average_proactive_keys, shortest_average_proactive_keys, qber_average_proactive_keys = 0, 0, 0
+    weighted_shortest_average_proactive_used_keys, shortest_average_proactive_used_keys, qber_average_proactive_used_keys = 0, 0, 0
+    weighted_shortest_average_proactive_gen_keys, shortest_average_proactive_gen_keys, qber_average_proactive_gen_keys = 0, 0, 0
+
     # Shortest path simulation
     env.metric_type = 'simple_shortest'
     # env.plot_topology()
@@ -758,6 +763,8 @@ if __name__ == "__main__":
         shortest_average_delay += info['delay']
         if proactive:
             shortest_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            shortest_average_proactive_used_keys += env.proactive_key_consume
+            shortest_average_proactive_gen_keys += env.proactive_key_generation
             print("SP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
     # env.plot_topology()
     # env.plot_heatmap()
@@ -778,6 +785,8 @@ if __name__ == "__main__":
         weighted_shortest_average_delay += info['delay']
         if proactive:
             weighted_shortest_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            weighted_shortest_average_proactive_used_keys += env.proactive_key_consume
+            weighted_shortest_average_proactive_gen_keys += env.proactive_key_generation
             print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
 
     # env.plot_topology()
@@ -800,6 +809,8 @@ if __name__ == "__main__":
         qber_average_delay += info['delay']
         if proactive:
             qber_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            qber_average_proactive_used_keys += env.proactive_key_consume
+            qber_average_proactive_gen_keys += env.proactive_key_generation
             print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
 
     shortest_average_reward /= num_simulation
@@ -810,6 +821,8 @@ if __name__ == "__main__":
     shortest_average_expired_keys /= num_simulation
     shortest_average_delay /= num_simulation
     shortest_average_proactive_keys /= num_simulation
+    shortest_average_proactive_used_keys /= num_simulation
+    shortest_average_proactive_gen_keys /= num_simulation
 
     weighted_shortest_average_reward /= num_simulation
     weighted_shortest_average_session_blocking /= num_simulation
@@ -819,6 +832,8 @@ if __name__ == "__main__":
     weighted_shortest_average_expired_keys /= num_simulation
     weighted_shortest_average_delay /= num_simulation
     weighted_shortest_average_proactive_keys /= num_simulation
+    weighted_shortest_average_proactive_used_keys /= num_simulation
+    weighted_shortest_average_proactive_gen_keys /= num_simulation
 
     qber_average_reward /= num_simulation
     qber_average_session_blocking /= num_simulation
@@ -828,6 +843,8 @@ if __name__ == "__main__":
     qber_average_expired_keys /= num_simulation
     qber_average_delay /= num_simulation
     qber_average_proactive_keys /= num_simulation
+    qber_average_proactive_used_keys /= num_simulation
+    qber_average_proactive_gen_keys /= num_simulation
 
     # Print the results in a tabular format
     print("Simulation information")
@@ -840,6 +857,7 @@ if __name__ == "__main__":
     print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms")
     print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
     print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
+    print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
     # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
     # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
