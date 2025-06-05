@@ -285,8 +285,8 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 3
-        self.generate_key_size = 5
-        self.generate_key_scale = 2
+        self.generate_key_size = 4
+        self.generate_key_scale = 3
         self.lifetime_threshold = threshold
         self.proactive = proactive
         self.proactive_type = '1-hop'
@@ -536,7 +536,7 @@ class QuantumEnvironment:
 
             # routing_path = nx.shortest_path(subnet, 0, 5)
             for edge in subnet.edges:
-                subnet[edge[0]][edge[1]]['weight'] = 1 / subnet[edge[0]][edge[1]]['num_key']
+                subnet[edge[0]][edge[1]]['weight'] = 100 + (1000 / (subnet[edge[0]][edge[1]]['num_key']) - 1) if subnet[edge[0]][edge[1]]['num_key'] > 1 else 100_000_000
             routing_path = nx.shortest_path(subnet, self.source_node, self.target_node, 'weight')
             # total_weight = sum(subnet[routing_path[i]][routing_path[i + 1]]['weight'] for i in range(len(routing_path) - 1))
             # print(routing_path, total_weight)
@@ -762,10 +762,11 @@ if __name__ == "__main__":
         shortest_average_expired_keys += info['expired_keys']
         shortest_average_delay += info['delay']
         if proactive:
-            shortest_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
+            shortest_average_proactive_keys += shortest_proactive_keys_ratio
             shortest_average_proactive_used_keys += env.proactive_key_consume
             shortest_average_proactive_gen_keys += env.proactive_key_generation
-            print("SP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
+            print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
     # env.plot_topology()
     # env.plot_heatmap()
 
@@ -784,10 +785,11 @@ if __name__ == "__main__":
         weighted_shortest_average_expired_keys += info['expired_keys']
         weighted_shortest_average_delay += info['delay']
         if proactive:
-            weighted_shortest_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            weighted_shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
+            weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
             weighted_shortest_average_proactive_used_keys += env.proactive_key_consume
             weighted_shortest_average_proactive_gen_keys += env.proactive_key_generation
-            print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
+            print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
     # env.plot_topology()
     # env.plot_heatmap()
@@ -808,10 +810,11 @@ if __name__ == "__main__":
         qber_average_expired_keys += info['expired_keys']
         qber_average_delay += info['delay']
         if proactive:
-            qber_average_proactive_keys += env.proactive_key_consume / env.proactive_key_generation
+            qber_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
+            qber_average_proactive_keys += qber_proactive_keys_ratio
             qber_average_proactive_used_keys += env.proactive_key_consume
             qber_average_proactive_gen_keys += env.proactive_key_generation
-            print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, (env.proactive_key_consume / env.proactive_key_generation) * 100)
+            print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, qber_proactive_keys_ratio * 100)
 
     shortest_average_reward /= num_simulation
     shortest_average_session_blocking /= num_simulation
