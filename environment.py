@@ -183,6 +183,7 @@ class QuantumEnvironment:
 
         if self.proactive_type == 'n-hop':
             G_edges = list(combinations(self.G.nodes, 2))
+
         for edge in G_edges:
             min_lifetime = self.key_life_time
             max_lifetime = 0  # 0
@@ -190,27 +191,40 @@ class QuantumEnvironment:
             if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                 continue
 
-            # path 경로 내의 가장 낮은 lifetime 찾기
-            # 먼저 min_lifetime 계산
+            # 경로 상 모든 edge의 key 개수를 리스트로 저장
+            key_counts = []
+            min_key_count = 0
             for i in range(len(path) - 1):
                 sorted_key = tuple(sorted((path[i], path[i + 1])))
-                if len(self.expand_key_pool[sorted_key]) > 0:
-                    min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
-                    max_lifetime = max(max_lifetime, self.expand_key_pool[sorted_key][-1])
+                key_counts.append(len(self.expand_key_pool[sorted_key]))
+            # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
+            if key_counts:
+                min_key_count = min(key_counts)
+            else:
+                min_key_count = 0  # or handle appropriately
 
-            if max_lifetime - min_lifetime < self.lifetime_threshold:
-                self.proactive_key_generation += 1
-                # 그 다음에 키 소비
+            for _ in range(min_key_count):
+                # path 경로 내의 가장 낮은 lifetime 찾기
+                # 먼저 min_lifetime 계산
                 for i in range(len(path) - 1):
                     sorted_key = tuple(sorted((path[i], path[i + 1])))
-                    self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                    self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
-                    # self.used_keys += self.consume_key_size
-                    self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                    self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
-                if edge in self.logi_key_pool:
-                    self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
-                    self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
+                    if len(self.expand_key_pool[sorted_key]) > 0:
+                        min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
+                        max_lifetime = max(max_lifetime, self.expand_key_pool[sorted_key][-1])
+
+                if max_lifetime - min_lifetime < self.lifetime_threshold:
+                    self.proactive_key_generation += self.consume_key_size    # self.consume_key_size
+                    # 그 다음에 키 소비
+                    for i in range(len(path) - 1):
+                        sorted_key = tuple(sorted((path[i], path[i + 1])))
+                        self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                        self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
+                        # self.used_keys += self.consume_key_size
+                        self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                        self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                    if edge in self.logi_key_pool:
+                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                        self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
 
         # Sorting logi_key_pool
         for key in self.logi_key_pool:
@@ -285,9 +299,9 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 3
-        self.generate_key_size = 4
-        self.generate_key_scale = 3
-        self.lifetime_threshold = threshold
+        self.generate_key_size = 5
+        self.generate_key_scale = 2
+        self.lifetime_threshold = 7   # threshold
         self.proactive = proactive
         self.proactive_type = '1-hop'
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
@@ -295,8 +309,8 @@ class QuantumEnvironment:
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 3
-        self.num_request_scale = 2
+        self.num_request = 5
+        self.num_request_scale = 1
         self.key_life_time = 10
         self.key_pool_size = 100_000
         self.key_pool = {}
@@ -373,13 +387,15 @@ class QuantumEnvironment:
         # num_request = max(0, int(np.random.normal(loc=self.num_request, scale=self.num_request_scale, size=1)))
         num_request = np.random.randint(0, self.num_request)
         # print(self.expand_G.edges(data=True))
-        for _ in range(num_request):
+        for i in range(num_request):
             self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
                                                                   size=2, replace=False)
-            if self.proactive:
+            if self.proactive and i == 0:
                 self.update_logical_topology()
+                print("time step: ", self.time_step, self.logi_key_pool)
             routing_path = self.find_routing_path()
             # print("time step: ", self.time_step, "routing path: ", routing_path, "node: ", self.source_node, self.target_node)
+
             self.apply_routing_path(routing_path)
 
             if not routing_path:
@@ -727,13 +743,17 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
     max_time_step = 1_000    # 1_000
-    threshold = 10            # 10
+    threshold = 1            # 10
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
+
+    # for i in range(13):
+    #     threshold = i
+    #     print("threshold: ", i)
 
     weighted_shortest_reward, shortest_reward, qber_reward, num_key_reward, combination_reward = 0, 0, 0, 0, 0
     weighted_shortest_average_reward, shortest_average_reward, qber_average_reward, num_key_average_reward, combination_average_reward = 0, 0, 0, 0, 0
@@ -766,7 +786,7 @@ if __name__ == "__main__":
             shortest_average_proactive_keys += shortest_proactive_keys_ratio
             shortest_average_proactive_used_keys += env.proactive_key_consume
             shortest_average_proactive_gen_keys += env.proactive_key_generation
-            print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
+            # print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
     # env.plot_topology()
     # env.plot_heatmap()
 
@@ -789,7 +809,7 @@ if __name__ == "__main__":
             weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
             weighted_shortest_average_proactive_used_keys += env.proactive_key_consume
             weighted_shortest_average_proactive_gen_keys += env.proactive_key_generation
-            print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
+            # print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
     # env.plot_topology()
     # env.plot_heatmap()
@@ -814,7 +834,7 @@ if __name__ == "__main__":
             qber_average_proactive_keys += qber_proactive_keys_ratio
             qber_average_proactive_used_keys += env.proactive_key_consume
             qber_average_proactive_gen_keys += env.proactive_key_generation
-            print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, qber_proactive_keys_ratio * 100)
+            # print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, qber_proactive_keys_ratio * 100)
 
     shortest_average_reward /= num_simulation
     shortest_average_session_blocking /= num_simulation
