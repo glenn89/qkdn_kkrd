@@ -299,7 +299,7 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 2
-        self.generate_key_size = 3
+        self.generate_key_size = 5
         self.generate_key_scale = 2
         self.lifetime_threshold = threshold   # threshold
         self.proactive = proactive
@@ -750,7 +750,7 @@ if __name__ == "__main__":
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = [1, 3, 5, 7, 9, 11]
+    threshold_list = [0, 2, 4, 6, 8, 10, 12]
 
     for i in threshold_list:
         threshold = i
