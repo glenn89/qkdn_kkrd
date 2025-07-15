@@ -249,8 +249,8 @@ class QuantumEnvironment:
                 if len(self.expand_key_pool[edge]) + generated_keys > self.key_pool_size:
                     self.expand_key_pool[edge] = self.expand_key_pool[edge][len(self.expand_key_pool[edge]) + generated_keys - self.key_pool_size:]
                     self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
-                self.expand_key_pool[edge].append(self.key_life_time)
-                self.logi_key_pool[edge].append(self.key_life_time)
+                self.expand_key_pool[edge].append(np.random.randint(1, self.key_life_time))
+                self.logi_key_pool[edge].append(np.random.randint(1, self.key_life_time))
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
             self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
@@ -302,8 +302,8 @@ class QuantumEnvironment:
         self.generate_key_size = 5
         self.generate_key_scale = 2
         self.lifetime_threshold = threshold   # threshold
-        self.proactive = proactive
-        self.proactive_type = '1-hop'
+        self.proactive = proactive   # proactive
+        self.proactive_type = proactive_type
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
         self.init_num_channel = 3
         self.consume_key_size = 1
@@ -311,7 +311,7 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 4
         self.num_request_scale = 1
-        self.key_life_time = 6
+        self.key_life_time = 10
         self.key_pool_size = 100_000
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -745,12 +745,12 @@ if __name__ == "__main__":
     max_time_step = 1_000    # 1_000
     threshold = 1            # 10
     proactive = True
-    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    proactive_type = 'n-hop' # '1-hop', 'n-hop'
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = [0, 2, 4, 6, 8, 10, 12]
+    threshold_list = range(0, 13)
 
     for i in threshold_list:
         threshold = i
