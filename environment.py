@@ -179,12 +179,9 @@ class QuantumEnvironment:
     # next state로 활용 하면 좋을 것 같음
     def update_logical_topology(self):
         max_lifetime, min_lifetime = 0, 0
-        G_edges = self.G.edges
+        G_edges_origin = self.G.edges
 
-        if self.proactive_type == 'n-hop':
-            G_edges = list(combinations(self.G.nodes, 2))
-
-        for edge in G_edges:
+        for edge in G_edges_origin:
             min_lifetime = self.key_life_time
             max_lifetime = 0  # 0
             path = nx.shortest_path(self.expand_G, edge[0], edge[1])
@@ -229,6 +226,68 @@ class QuantumEnvironment:
         # Sorting logi_key_pool
         for key in self.logi_key_pool:
             self.logi_key_pool[key].sort()
+
+        # N-hop's proactive key generation process
+        G_edges = []
+        if self.proactive_type == 'n-hop':
+            all_pairs = [p for p in combinations(self.G.nodes, 2) if p not in G_edges_origin]
+            copied_G = copy.deepcopy(self.logi_G)
+            subnet = nx.subgraph_view(
+                copied_G,
+                filter_edge=lambda u, v: self.G.has_edge(u, v)
+            )
+
+            priority = {}
+            for u, v in all_pairs:
+                for edge in G_edges_origin:
+                    subnet[edge[0]][edge[1]]['weight'] = 100 + (1000 / (self.logi_G[edge[0]][edge[1]]['num_key']) - 1)if self.logi_G[edge[0]][edge[1]]['num_key'] > 1 else 100_000_000
+                try:
+                    path = nx.shortest_path(subnet, u, v, weight='weight')
+                except nx.NetworkXNoPath:
+                    continue
+                remain_keys = min(
+                    subnet.edges[tuple(sorted((path[i], path[i + 1])))]['num_key']
+                    for i in range(len(path) - 1)
+                )
+                distance = len(path) - 1
+                priority[(u, v)] = 1.0 / ((remain_keys + 1) * distance)
+            sorted_pairs = sorted(priority, key=priority.get, reverse=True)
+
+            path_list = []
+            for edge in sorted_pairs:
+                u, v = edge
+                self.logi_G[u][v]['weight'] = 100 + (1000 / (self.logi_G[u][v]['num_key']) - 1)if self.logi_G[u][v]['num_key'] > 1 else 100_000_000
+                try:
+                    path = nx.shortest_path(self.logi_G, u, v, weight='weight')
+                except nx.NetworkXNoPath:
+                    continue
+
+                counts, lifetimes = [], []
+                for i in range(len(path) - 1):
+                    hop = tuple(sorted((path[i], path[i+1])))
+                    counts.append(self.logi_G.edges[hop]['num_key'])
+                    lifetimes.extend(self.logi_key_pool.get(hop, []))
+                if not counts or not lifetimes:
+                    continue
+                min_count = min(counts)
+                min_life = min(lifetimes)
+                max_life = max(lifetimes)
+                existing_nhop = self.logi_G.edges[edge]['num_key'] if self.logi_G.has_edge(*edge) else 0
+                # if enough 1-hop keys and lifetime gap < threshold
+
+                if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold:
+                    self.proactive_key_generation += self.consume_key_size
+                    for i in range(len(path) - 1):
+                        sorted_key = tuple(sorted((path[i], path[i+1])))
+                        # self.used_keys += self.consume_key_size
+                        self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                        self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                    if edge in self.logi_key_pool:
+                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                        self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
+
+            for key in self.logi_key_pool:
+                self.logi_key_pool[key].sort()
 
     def key_generation(self):
         edges = list(self.expand_G.edges())
@@ -299,9 +358,9 @@ class QuantumEnvironment:
         self.max_time_step = max_time_step
 
         self.generate_key_time_slot = 2
-        self.generate_key_size = 5
+        self.generate_key_size = 20
         self.generate_key_scale = 2
-        self.lifetime_threshold = threshold   # threshold
+        self.lifetime_threshold = 10   # threshold
         self.proactive = proactive   # proactive
         self.proactive_type = proactive_type
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
@@ -309,7 +368,7 @@ class QuantumEnvironment:
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 4
+        self.num_request = 10
         self.num_request_scale = 1
         self.key_life_time = 10
         self.key_pool_size = 100_000
@@ -743,7 +802,7 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
     max_time_step = 1_000    # 1_000
-    threshold = 1            # 10
+    threshold = 10            # 10
     proactive = True
     proactive_type = 'n-hop' # '1-hop', 'n-hop'
     num_simulation = 5
