@@ -189,38 +189,49 @@ class QuantumEnvironment:
                 continue
 
             # 경로 상 모든 edge의 key 개수를 리스트로 저장
-            key_counts = []
+            key_counts, lifetimes = [], []
             min_key_count = 0
             for i in range(len(path) - 1):
                 sorted_key = tuple(sorted((path[i], path[i + 1])))
                 key_counts.append(len(self.expand_key_pool[sorted_key]))
+                lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
             # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
             if key_counts:
                 min_key_count = min(key_counts)
+                min_lifetime = min(lifetimes)
+                max_lifetime = max(lifetimes)
             else:
                 min_key_count = 0  # or handle appropriately
+                min_lifetime = 0
 
             for _ in range(min_key_count):
-                # path 경로 내의 가장 낮은 lifetime 찾기
-                # 먼저 min_lifetime 계산
-                for i in range(len(path) - 1):
-                    sorted_key = tuple(sorted((path[i], path[i + 1])))
-                    if len(self.expand_key_pool[sorted_key]) > 0:
-                        min_lifetime = min(min_lifetime, self.expand_key_pool[sorted_key][0])
-                        max_lifetime = max(max_lifetime, self.expand_key_pool[sorted_key][-1])
-
                 if max_lifetime - min_lifetime < self.lifetime_threshold:
-                    self.proactive_key_generation += self.consume_key_size    # self.consume_key_size
-                    # 그 다음에 키 소비
+                    # 1) 경로(path) 상 각 링크에 남아 있는 key들의 최소 lifetime 계산
+                    remaining_lifetimes = []
                     for i in range(len(path) - 1):
                         sorted_key = tuple(sorted((path[i], path[i + 1])))
+                        pool = self.logi_key_pool.get(sorted_key, [])
+                        if pool:
+                            remaining_lifetimes.append(min(pool))
+                    # 남은 key가 없으면 기본 min_lifetime 사용
+                    min_remain_key = min(remaining_lifetimes) if remaining_lifetimes else min_lifetime
+
+                    # 2) proactive key 생성량 기록
+                    self.proactive_key_generation += self.consume_key_size
+
+                    # 3) 경로상 key 소비
+                    for i in range(len(path) - 1):
+                        sorted_key = tuple(sorted((path[i], path[i + 1])))
+                        # expand_G에서 소비
                         self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
-                        # self.used_keys += self.consume_key_size
+                        # logi_G에서 소비
                         self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+
+                    # 4) 논리 그래프(edge)에 proactive key 추가
                     if edge in self.logi_key_pool:
-                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                        self.logi_key_pool[edge].extend([min_remain_key] * self.consume_key_size)
                         self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
 
         # Sorting logi_key_pool
@@ -253,28 +264,26 @@ class QuantumEnvironment:
                 priority[(u, v)] = 1.0 / ((remain_keys + 1) * distance)
             sorted_pairs = sorted(priority, key=priority.get, reverse=True)
 
-            path_list = []
             for edge in sorted_pairs:
                 u, v = edge
-                self.logi_G[u][v]['weight'] = 100 + (1000 / (self.logi_G[u][v]['num_key']) - 1)if self.logi_G[u][v]['num_key'] > 1 else 100_000_000
-                try:
-                    path = nx.shortest_path(self.logi_G, u, v, weight='weight')
-                except nx.NetworkXNoPath:
+                self.logi_G[u][v]['weight'] = 100 + (1000 / (self.logi_G[u][v]['num_key']) - 1) if self.logi_G[u][v]['num_key'] > 1 else 100_000_000
+                path = nx.shortest_path(self.logi_G, u, v, weight='weight')
+                if any(self.logi_G[path[i]][path[i+1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                     continue
 
                 counts, lifetimes = [], []
                 for i in range(len(path) - 1):
-                    hop = tuple(sorted((path[i], path[i+1])))
-                    counts.append(self.logi_G.edges[hop]['num_key'])
-                    lifetimes.extend(self.logi_key_pool.get(hop, []))
+                    sorted_key = tuple(sorted((path[i], path[i+1])))
+                    counts.append(self.logi_G.edges[sorted_key]['num_key'])
+                    lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
                 if not counts or not lifetimes:
                     continue
                 min_count = min(counts)
                 min_life = min(lifetimes)
                 max_life = max(lifetimes)
                 existing_nhop = self.logi_G.edges[edge]['num_key'] if self.logi_G.has_edge(*edge) else 0
-                # if enough 1-hop keys and lifetime gap < threshold
 
+                # if enough 1-hop keys and lifetime gap < threshold
                 if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold:
                     self.proactive_key_generation += self.consume_key_size
                     for i in range(len(path) - 1):
@@ -283,7 +292,7 @@ class QuantumEnvironment:
                         self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
                     if edge in self.logi_key_pool:
-                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                        self.logi_key_pool[edge].extend([min_life] * self.consume_key_size)
                         self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
 
             for key in self.logi_key_pool:
@@ -952,6 +961,7 @@ if __name__ == "__main__":
         # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
         print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
         print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
+        print()
         # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
         # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
