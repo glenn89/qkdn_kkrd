@@ -50,6 +50,7 @@ class QuantumEnvironment:
         self.logi_G_edges = None
         self.logi_key_pool = None
         self.expand_key_pool = None
+        self.key_pool_min_threshold = None
         self.key_life_time = 0
 
         self.time_step = 0
@@ -196,6 +197,7 @@ class QuantumEnvironment:
                 key_counts.append(len(self.expand_key_pool[sorted_key]))
                 lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
             # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
+
             if key_counts:
                 min_key_count = min(key_counts)
                 min_lifetime = min(lifetimes)
@@ -221,7 +223,7 @@ class QuantumEnvironment:
 
                     # 3) 경로상 key 소비
                     for i in range(len(path) - 1):
-                        sorted_key = tuple(sorted((path[i], path[i + 1])))
+                        sorted_key = tuple(sorted((path[i], path[i+1])))
                         # expand_G에서 소비
                         self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
@@ -276,7 +278,7 @@ class QuantumEnvironment:
                     sorted_key = tuple(sorted((path[i], path[i+1])))
                     counts.append(self.logi_G.edges[sorted_key]['num_key'])
                     lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
-                if not counts or not lifetimes:
+                if not counts or not lifetimes or any(n <= self.key_pool_min_threshold for n in counts):
                     continue
                 min_count = min(counts)
                 min_life = min(lifetimes)
@@ -305,7 +307,7 @@ class QuantumEnvironment:
         for edge in edges:
             ######### Apply static generated key #########
             # generated_keys = max(1, int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1)))
-            generated_keys = np.random.randint(0, self.generate_key_size)
+            generated_keys = np.random.randint(10, self.generate_key_size)
             self.total_generation_keys += generated_keys
             # if edge == (0, 15):
             #     print(self.time_step, generated_keys)
@@ -317,8 +319,9 @@ class QuantumEnvironment:
                 if len(self.expand_key_pool[edge]) + generated_keys > self.key_pool_size:
                     self.expand_key_pool[edge] = self.expand_key_pool[edge][len(self.expand_key_pool[edge]) + generated_keys - self.key_pool_size:]
                     self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
-                self.expand_key_pool[edge].append(np.random.randint(1, self.key_life_time))
-                self.logi_key_pool[edge].append(np.random.randint(1, self.key_life_time))
+                life_time = np.random.randint(2, self.key_life_time)
+                self.expand_key_pool[edge].append(life_time)
+                self.logi_key_pool[edge].append(life_time)
 
             self.expand_G[edge[0]][edge[1]]['num_key'] = len(self.expand_key_pool[edge])
             self.logi_G[edge[0]][edge[1]]['num_key'] = len(self.logi_key_pool[edge])
@@ -382,10 +385,11 @@ class QuantumEnvironment:
         self.consume_key_size = 1
         self.consume_mean = 1
         self.consume_std_dev = 2
-        self.num_request = 10
+        self.num_request = 50
         self.num_request_scale = 1
         self.key_life_time = 10
         self.key_pool_size = 100_000
+        self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
         self.expand_key_pool = {}
@@ -821,10 +825,10 @@ class QuantumEnvironment:
 
 if __name__ == "__main__":
     env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
-    max_time_step = 1_000    # 1_000
+    max_time_step = 500    # 1_000
     threshold = 10            # 10
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
