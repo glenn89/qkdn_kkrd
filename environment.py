@@ -54,11 +54,13 @@ class QuantumEnvironment:
         self.key_life_time = 0
 
         self.time_step = 0
-        self.lifetime_threshold = None
+        self.lifetime_threshold_1 = None
+        self.lifetime_threshold_4 = None
         self.source_node = None
         self.target_node = None
         self.service_duration_time = None
         self.service_routing_path = None
+        self.path_length = None
 
         self.session_blocking = 0
         self.total_generation_keys = 0
@@ -182,53 +184,52 @@ class QuantumEnvironment:
         max_lifetime, min_lifetime = 0, 0
         G_edges_origin = self.G.edges
 
-        if self.proactive_type == '1-hop':
-            for edge in G_edges_origin:
-                min_lifetime = self.key_life_time
-                max_lifetime = 0  # 0
-                path = nx.shortest_path(self.expand_G, edge[0], edge[1])
-                if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
-                    continue
+        for edge in G_edges_origin:
+            min_lifetime = self.key_life_time
+            max_lifetime = 0  # 0
+            path = nx.shortest_path(self.expand_G, edge[0], edge[1])
+            if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
+                continue
 
-                # 경로 상 모든 edge의 key 개수를 리스트로 저장
-                key_counts, lifetimes = [], []
-                min_key_count = 0
-                for i in range(len(path) - 1):
-                    sorted_key = tuple(sorted((path[i], path[i + 1])))
-                    key_counts.append(len(self.expand_key_pool[sorted_key]))
-                    lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
-                # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
+            # 경로 상 모든 edge의 key 개수를 리스트로 저장
+            key_counts, lifetimes = [], []
+            min_key_count = 0
+            for i in range(len(path) - 1):
+                sorted_key = tuple(sorted((path[i], path[i + 1])))
+                key_counts.append(len(self.expand_key_pool[sorted_key]))
+                lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
+            # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
 
-                if key_counts:
-                    min_key_count = min(key_counts)
-                    min_lifetime = min(lifetimes)
-                    max_lifetime = max(lifetimes)
-                else:
-                    min_key_count = 0  # or handle appropriately
-                    min_lifetime = 0
+            if key_counts:
+                min_key_count = min(key_counts)
+                min_lifetime = min(lifetimes)
+                max_lifetime = max(lifetimes)
+            else:
+                min_key_count = 0  # or handle appropriately
+                min_lifetime = 0
 
-                for _ in range(min_key_count):
-                    if max_lifetime - min_lifetime < self.lifetime_threshold:
-                        # 2) proactive key 생성량 기록
-                        self.proactive_key_generation += self.consume_key_size
+            for _ in range(min_key_count):
+                if max_lifetime - min_lifetime < self.lifetime_threshold_1:
+                    # 2) proactive key 생성량 기록
+                    self.proactive_key_generation += self.consume_key_size
 
-                        # 3) 경로상 key 소비
-                        for i in range(len(path) - 1):
-                            sorted_key = tuple(sorted((path[i], path[i+1])))
-                            # expand_G에서 소비
-                            self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                            self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
-                            # logi_G에서 소비
-                            self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                            self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                    # 3) 경로상 key 소비
+                    for i in range(len(path) - 1):
+                        sorted_key = tuple(sorted((path[i], path[i+1])))
+                        # expand_G에서 소비
+                        self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                        self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
+                        # logi_G에서 소비
+                        self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                        self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
 
-                        # 4) 논리 그래프(edge)에 proactive key 추가
-                        if edge in self.logi_key_pool:
-                            self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
-                            self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
+                    # 4) 논리 그래프(edge)에 proactive key 추가
+                    if edge in self.logi_key_pool:
+                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                        self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
 
         # N-hop's proactive key generation process
-        elif self.proactive_type == 'n-hop':
+        if self.proactive_type == 'n-hop':
             all_pairs = [p for p in combinations(self.G.nodes, 2) if p not in G_edges_origin]
             copied_G = copy.deepcopy(self.logi_G)
             subnet = nx.subgraph_view(
@@ -272,7 +273,7 @@ class QuantumEnvironment:
                 existing_nhop = self.logi_G.edges[edge]['num_key'] if self.logi_G.has_edge(*edge) else 0
 
                 # if enough 1-hop keys and lifetime gap < threshold
-                if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold:
+                if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold_4:
                     self.proactive_key_generation += self.consume_key_size
                     for i in range(len(path) - 1):
                         sorted_key = tuple(sorted((path[i], path[i+1])))
@@ -294,7 +295,7 @@ class QuantumEnvironment:
         for edge in edges:
             ######### Apply static generated key #########
             # generated_keys = max(1, int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1)))
-            generated_keys = np.random.randint(10, self.generate_key_size)
+            generated_keys = np.random.randint(2, self.generate_key_size)
             self.total_generation_keys += generated_keys
             # if edge == (0, 15):
             #     print(self.time_step, generated_keys)
@@ -369,9 +370,9 @@ class QuantumEnvironment:
         # # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold = threshold # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = 9   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_4 = threshold   # threshold
 
-        # self.lifetime_threshold = threshold   # threshold
         self.proactive = proactive   # proactive
         self.proactive_type = proactive_type #proactive_type
         # self.generate_key_size = np.random.pareto(1, 1).astype(int)[0] * 20
@@ -381,7 +382,7 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 50
         self.num_request_scale = 1
-        self.key_life_time = 8
+        self.key_life_time = 10
         self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
@@ -409,6 +410,7 @@ class QuantumEnvironment:
         self.no_path_count = 0
         self.cumulative_size = 5
         self.cumulative_edge_keys = {}
+        self.path_length = {}
         for edge in self.G.edges:
             self.cumulative_edge_keys[edge] = []
             self.G[edge[0]][edge[1]]['num_channel'] = self.init_num_channel
@@ -475,6 +477,10 @@ class QuantumEnvironment:
 
             self.apply_routing_path(routing_path)
 
+            # 길이별 카운트 업데이트
+            length = len(routing_path) - 1
+            self.path_length[length] = self.path_length.get(length, 0) + 1
+
             if not routing_path:
                 self.session_blocking -= 1
             else:
@@ -539,6 +545,7 @@ class QuantumEnvironment:
             'expired_keys': self.expired_keys,
             'graph': self.G,
             'delay': self.delay,
+            'path_length': self.path_length
         }
 
         # Check environment | reflect action | reduction resource
@@ -822,16 +829,18 @@ if __name__ == "__main__":
     max_time_step = 200    # 1_000
     threshold = 10            # 10
     proactive = True
-    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    proactive_type = 'n-hop' # '1-hop', 'n-hop'
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(1, 14, 1)
+    threshold_list = range(0, 14, 1)
 
     print("Simulation information")
     print("The number of max time step: ", max_time_step)
     print("The number of simulation: ", num_simulation)
+    if proactive:
+        print("Proactive Type: ", proactive_type)
     print()
 
     for i in threshold_list:
