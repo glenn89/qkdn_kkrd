@@ -139,7 +139,7 @@ class QuantumEnvironment:
 
                 # 기존 엣지 제거
                 self.expand_G.remove_edge(u, v)
-            elif self.topology_conf['NAME'] == 'NSFNET':
+            elif self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
                 num_intermediates = int(attr['distance'] / 100)
                 path_nodes = [u]
 
@@ -307,7 +307,7 @@ class QuantumEnvironment:
                 if len(self.expand_key_pool[edge]) + generated_keys > self.key_pool_size:
                     self.expand_key_pool[edge] = self.expand_key_pool[edge][len(self.expand_key_pool[edge]) + generated_keys - self.key_pool_size:]
                     self.logi_key_pool[edge] = self.logi_key_pool[edge][len(self.logi_key_pool[edge]) + generated_keys - self.key_pool_size:]
-                life_time = self.key_life_time
+                life_time = self.key_life_time   # np.random.randint(3, self.key_life_time)
                 self.expand_key_pool[edge].append(life_time)
                 self.logi_key_pool[edge].append(life_time)
 
@@ -366,11 +366,11 @@ class QuantumEnvironment:
         self.generate_key_size = 20
         self.generate_key_scale = 2
 
-        # max_test_threshold = 13  # 실험에서 쓰는 최대 threshold 값
-        # # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
+        # max_test_threshold = 10  # 실험에서 쓰는 최대 threshold 값
+        # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = 9   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -825,11 +825,11 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    env = QuantumEnvironment(topology_type='NSFNET') # BUTTERFLY
+    env = QuantumEnvironment(topology_type='COST266') # BUTTERFLY
     max_time_step = 200    # 1_000
     threshold = 10            # 10
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
