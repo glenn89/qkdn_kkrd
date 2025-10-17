@@ -1,4 +1,6 @@
 import copy
+import csv
+import pickle
 from itertools import combinations
 from random import random
 
@@ -9,13 +11,33 @@ import topology_conf
 
 
 class Request:
-    def __init__(self):
+    def __init__(self, max_time_step, topology_conf, dist_probability):
         self.discard_time = 0
         self.ID = 0
 
+        self.rng = np.random.default_rng()
+        self.requests = self.make_requests_for_all_steps(T=max_time_step,
+                                                         N=topology_conf['NUM_QKD_NODE'],
+                                                         p=dist_probability)
+    def make_requests_for_all_steps(self, T, N, p):
+        reqs_by_t = []
+        iu, ju = np.triu_indices(N, k=1)  # 무방향 예시
+        for _ in range(T):
+            keep = self.rng.binomial(1, p, size=iu.shape[0]).astype(bool)
+            reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
+        return reqs_by_t
+
+    def save_requests(self, filename="requests/NSFNET_requests_0903_05.pkl"):
+        with open(filename, "wb") as f:
+            pickle.dump(self.requests, f)
+
+    def load_requests(self, filename="requests/NSFNET_requests_0903_05.pkl"):
+        with open(filename, "rb") as f:
+            self.requests = pickle.load(f)
+
 
 class QuantumEnvironment:
-    def __init__(self, topology_type):
+    def __init__(self, max_time_step, topology_type):
         self.G = None
         self.logi_G = None
         self.expand_G = None
@@ -27,9 +49,13 @@ class QuantumEnvironment:
             'COST266': topology_conf.cost266_topo
         }
         self.topology_conf = self.topology_list[topology_type]
+        if self.topology_conf['NAME'] == 'NSFNET':
+            self.dist_probability = 0.50
+        elif self.topology_conf['NAME'] == 'COST266':
+            self.dist_probability = 0.10
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
-        self.max_time_step = 0
+        self.max_time_step = max_time_step
         self.training = None
         self.proactive = None
         self.proactive_type = None
@@ -61,11 +87,13 @@ class QuantumEnvironment:
         self.service_duration_time = None
         self.service_routing_path = None
         self.path_length = None
+        self.all_possible_edges = None
 
         self.session_blocking = 0
         self.total_generation_keys = 0
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
+        self.proactive_key_expired = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.expired_keys = 0
@@ -80,6 +108,10 @@ class QuantumEnvironment:
         self.cumulative_size = 1
         self.cumulative_edge_keys = None
         self.alpha = 0
+
+        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
+        self.requests.load_requests()
+
 
     def generate_topology(self):
         self.G = nx.Graph()
@@ -104,7 +136,7 @@ class QuantumEnvironment:
             } for n in range(len(edges))
         }
         nx.set_edge_attributes(self.G, edges_attribute)
-        if self.topology_conf['NAME'] == 'NSFNET':
+        if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
             for i in range(len(self.G.nodes)):
                 for j in range(i + 1, len(self.G.nodes)):  # 대칭 행렬이므로 i < j
                     distance = self.topology_conf['QKD_TOPOLOGY_DISTANCE'][i][j]
@@ -121,32 +153,14 @@ class QuantumEnvironment:
         next_node_id = len(self.expand_G.nodes) + 1
         edges = list(self.expand_G.edges(data=True))
         for u, v, attr in edges:
-            if self.topology_conf['NAME'] != 'NSFNET':
-                # 기존 엣지 중간에 두 개의 노드를 추가
-                new_node1 = next_node_id
-                new_node2 = next_node_id + 1
-                next_node_id += 2
-
-                # 새 노드 추가
-                self.expand_G.add_node(new_node1, city=f"Node {new_node1}")
-                self.expand_G.add_node(new_node2, city=f"Node {new_node2}")
-
-                # 엣지 추가
-                num_key = attr["num_key"]
-                self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key)
-                self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key)
-                self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key)
-
-                # 기존 엣지 제거
-                self.expand_G.remove_edge(u, v)
-            elif self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
+            if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
                 num_intermediates = int(attr['distance'] / 100)
                 path_nodes = [u]
 
                 # n개의 중간 노드 생성
                 for _ in range(num_intermediates):
                     new_node = next_node_id
-                    self.expand_G.add_node(new_node, city=f"Node {new_node}")
+                    self.expand_G.add_node(new_node, city=f"Node {new_node}", owner_edge=tuple((u, v)))
                     path_nodes.append(new_node)
                     next_node_id += 1
 
@@ -159,7 +173,25 @@ class QuantumEnvironment:
                 num_key = attr["num_key"]
                 for i in range(len(path_nodes) - 1):
                     n1, n2 = path_nodes[i], path_nodes[i + 1]
-                    self.expand_G.add_edge(n1, n2, weight=num_key, num_key=num_key)
+                    self.expand_G.add_edge(n1, n2, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+            else:
+                # 기존 엣지 중간에 두 개의 노드를 추가
+                new_node1 = next_node_id
+                new_node2 = next_node_id + 1
+                next_node_id += 2
+
+                # 새 노드 추가
+                self.expand_G.add_node(new_node1, city=f"Node {new_node1}", owner_edge=tuple((u, v)))
+                self.expand_G.add_node(new_node2, city=f"Node {new_node2}", owner_edge=tuple((u, v)))
+
+                # 엣지 추가
+                num_key = attr["num_key"]
+                self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+                self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+                self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+
+                # 기존 엣지 제거
+                self.expand_G.remove_edge(u, v)
 
         self.expand_key_pool.update((key, []) for key in self.expand_G.edges)  # Generate expand key pool
         for edge in self.expand_G.edges:
@@ -169,8 +201,8 @@ class QuantumEnvironment:
         # for edge in self.logi_G.edges:
         #     print(edge)
         # self.G의 논리적 edge 추가
-        all_possible_edges = list(combinations(self.G.nodes, 2))
-        for u, v in all_possible_edges:
+        self.all_possible_edges = list(combinations(self.G.nodes, 2))
+        for u, v in self.all_possible_edges:
             if not self.logi_G.has_edge(u, v):
                 self.logi_G.add_edge(u, v, weight=0, num_key=0)
             if (u, v) not in self.logi_key_pool and (v, u) not in self.logi_key_pool:
@@ -187,8 +219,16 @@ class QuantumEnvironment:
         for edge in G_edges_origin:
             min_lifetime = self.key_life_time
             max_lifetime = 0  # 0
-            path = nx.shortest_path(self.expand_G, edge[0], edge[1])
-            if any(self.expand_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
+
+            origin_nodes = {edge[0], edge[1]}
+            origin_nodes |= {
+                n for n, d in self.expand_G.nodes(data=True)
+                if d.get("owner_edge") == edge
+            }
+            H = self.expand_G.subgraph(origin_nodes)
+            path = nx.shortest_path(H, edge[0], edge[1])
+
+            if any(self.logi_G[path[i]][path[i + 1]]['num_key'] < self.consume_key_size for i in range(len(path) - 1)):
                 continue
 
             # 경로 상 모든 edge의 key 개수를 리스트로 저장
@@ -196,7 +236,7 @@ class QuantumEnvironment:
             min_key_count = 0
             for i in range(len(path) - 1):
                 sorted_key = tuple(sorted((path[i], path[i + 1])))
-                key_counts.append(len(self.expand_key_pool[sorted_key]))
+                key_counts.append(len(self.logi_key_pool[sorted_key]))
                 lifetimes.extend(self.logi_key_pool.get(sorted_key, []))
             # 경로 내에 key_pool이 비어있는 edge가 있을 수 있으므로 예외처리 필요
 
@@ -222,6 +262,8 @@ class QuantumEnvironment:
                         # logi_G에서 소비
                         self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                        self.node_num_heat[edge[0]][edge[1]] += 1
+                        self.node_num_heat[edge[1]][edge[0]] += 1
 
                     # 4) 논리 그래프(edge)에 proactive key 추가
                     if edge in self.logi_key_pool:
@@ -240,7 +282,7 @@ class QuantumEnvironment:
             priority = {}
             for u, v in all_pairs:
                 for edge in G_edges_origin:
-                    subnet[edge[0]][edge[1]]['weight'] = 100 + (1000 / (self.logi_G[edge[0]][edge[1]]['num_key']) - 1)if self.logi_G[edge[0]][edge[1]]['num_key'] > 1 else 100_000_000
+                    subnet[edge[0]][edge[1]]['weight'] = 100 + (1000 / (self.logi_G[edge[0]][edge[1]]['num_key']) - 1) if self.logi_G[edge[0]][edge[1]]['num_key'] > 1 else 100_000_000
                 try:
                     path = nx.shortest_path(subnet, u, v, weight='weight')
                 except nx.NetworkXNoPath:
@@ -250,8 +292,12 @@ class QuantumEnvironment:
                     for i in range(len(path) - 1)
                 )
                 distance = len(path) - 1
-                priority[(u, v)] = 1.0 / ((remain_keys + 1) * distance)
+                priority[(u, v)] = (1 / (remain_keys + 1)) + (1 / distance)
+                # priority[(u, v)] = (remain_keys + 1)
+                # priority[(u, v)] = 1.0 / distance
             sorted_pairs = sorted(priority, key=priority.get, reverse=True)
+            # print(priority)
+            # print(sorted_pairs)
 
             for edge in sorted_pairs:
                 u, v = edge
@@ -280,9 +326,13 @@ class QuantumEnvironment:
                         # self.used_keys += self.consume_key_size
                         self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                        self.node_num_heat[path[i]][path[i+1]] -= 1
+                        self.node_num_heat[path[i+1]][path[i]] -= 1
                     if edge in self.logi_key_pool:
                         self.logi_key_pool[edge].extend([min_life] * self.consume_key_size)
                         self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
+                        self.node_num_heat[edge[0]][edge[1]] += 1
+                        self.node_num_heat[edge[1]][edge[0]] += 1
 
         # Sorting logi_key_pool
         for key in self.logi_key_pool:
@@ -295,7 +345,7 @@ class QuantumEnvironment:
         for edge in edges:
             ######### Apply static generated key #########
             # generated_keys = max(1, int(np.random.normal(loc=self.generate_key_size, scale=self.generate_key_scale, size=1)))
-            generated_keys = np.random.randint(2, self.generate_key_size)
+            generated_keys = np.random.randint(0, self.generate_key_size)
             self.total_generation_keys += generated_keys
             # if edge == (0, 15):
             #     print(self.time_step, generated_keys)
@@ -362,15 +412,14 @@ class QuantumEnvironment:
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
 
-        self.generate_key_time_slot = 2
-        self.generate_key_size = 20
+        self.generate_key_time_slot = 1
+        self.generate_key_size = 10
         self.generate_key_scale = 2
-
         # max_test_threshold = 10  # 실험에서 쓰는 최대 threshold 값
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = 10   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -382,7 +431,7 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 50
         self.num_request_scale = 1
-        self.key_life_time = 10
+        self.key_life_time = 20
         self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
@@ -396,6 +445,7 @@ class QuantumEnvironment:
         self.total_generation_keys = 0
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
+        self.proactive_key_expired = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.expired_keys = 0
@@ -458,12 +508,18 @@ class QuantumEnvironment:
         step_delay = 0
         success_request = 0
         # num_request = max(0, int(np.random.normal(loc=self.num_request, scale=self.num_request_scale, size=1)))
-        num_request = np.random.randint(0, self.num_request)
-        # print(self.expand_G.edges(data=True))
-        for i in range(num_request):
-            self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
-                                                                  size=2, replace=False)
-            if self.proactive and i == 0:
+        # num_request = np.random.randint(0, self.num_request)
+        # for i in range(num_request):
+        #     self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']),
+        #                                                           size=2, replace=False)
+
+        ## Bernoulli Distribution based requests generation
+        # iu, ju = np.triu_indices(self.topology_conf['NUM_QKD_NODE'], k=1)  # (i<j)
+        # keep = np.random.default_rng().random(iu.shape[0]) < self.dist_probability
+        # requests = np.column_stack([iu[keep], ju[keep]]).astype(int)
+        for src, dst in self.requests.requests[self.time_step]:
+            self.source_node, self.target_node = int(src), int(dst)
+            if self.proactive:
                 self.update_logical_topology()
                 # edges_weights = [
                 #     f"({u}, {v}): {data.get('num_key', None)}"
@@ -526,6 +582,8 @@ class QuantumEnvironment:
             self.logi_key_pool[sorted_key] = [life for life in self.logi_key_pool[sorted_key] if life >= 1]  # remove expired key
             self.logi_G.edges[sorted_key]['num_key'] = len(self.logi_key_pool[sorted_key])
             self.expired_keys += original_len_logi - len(self.logi_key_pool[sorted_key])
+            if sorted_key in self.all_possible_edges:
+                self.proactive_key_expired += original_len_logi - len(self.logi_key_pool[sorted_key])
 
         if self.time_step != 0 and self.time_step % self.generate_key_time_slot == 0:
             self.key_generation()
@@ -545,7 +603,8 @@ class QuantumEnvironment:
             'expired_keys': self.expired_keys,
             'graph': self.G,
             'delay': self.delay,
-            'path_length': self.path_length
+            'path_length': self.path_length,
+            'heat_map': self.node_num_heat
         }
 
         # Check environment | reflect action | reduction resource
@@ -825,23 +884,38 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    env = QuantumEnvironment(topology_type='COST266') # BUTTERFLY
-    max_time_step = 200    # 1_000
+    max_time_step = 200  # 1_000
     threshold = 10            # 10
     proactive = True
-    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    proactive_type = 'n-hop' # '1-hop', 'n-hop'
+    topology_type = 'NSFNET'
+    env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
+
     num_simulation = 5
     seed = [0, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(0, 14, 1)
+    threshold_list = range(0, 21, 1)
 
     print("Simulation information")
     print("The number of max time step: ", max_time_step)
     print("The number of simulation: ", num_simulation)
+    print("Topology type: ", topology_type)
     if proactive:
         print("Proactive Type: ", proactive_type)
+        print("Request gen probability: ", env.dist_probability)
+        print("threshold 1: ", env.lifetime_threshold_1)
+        print("threshold 4: ", env.lifetime_threshold_4)
     print()
+
+    metrics = [
+        "average_reward", "average_session_blocking", "average_total_generation_keys",
+        "average_remaining_keys", "average_used_keys", "average_expired_keys",
+        "average_delay", "average_proactive_keys", "average_proactive_used_keys",
+        "average_proactive_gen_keys", "average_proactive_expired_keys"
+    ]
+
+    shortest_path_info, weighted_shortest_path_info = [{k: [] for k in metrics} for _ in range(2)]
 
     for i in threshold_list:
         threshold = i
@@ -857,12 +931,14 @@ if __name__ == "__main__":
         weighted_shortest_average_proactive_keys, shortest_average_proactive_keys, qber_average_proactive_keys = 0, 0, 0
         weighted_shortest_average_proactive_used_keys, shortest_average_proactive_used_keys, qber_average_proactive_used_keys = 0, 0, 0
         weighted_shortest_average_proactive_gen_keys, shortest_average_proactive_gen_keys, qber_average_proactive_gen_keys = 0, 0, 0
+        weighted_shortest_average_proactive_expired_keys, shortest_average_proactive_expired_keys, qber_average_proactive_expired_keys = 0, 0, 0
 
         # Shortest path simulation
         env.metric_type = 'simple_shortest'
         # env.plot_topology()
         for i in range(num_simulation):
-            env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
+            env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type,
+                      threshold=threshold)
             for _ in range(max_time_step):
                 _, shortest_reward, _, _, info = env.step(action)
             shortest_average_reward += shortest_reward
@@ -877,6 +953,7 @@ if __name__ == "__main__":
                 shortest_average_proactive_keys += shortest_proactive_keys_ratio
                 shortest_average_proactive_used_keys += env.proactive_key_consume
                 shortest_average_proactive_gen_keys += env.proactive_key_generation
+                shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
         # env.plot_topology()
         # env.plot_heatmap()
@@ -885,7 +962,8 @@ if __name__ == "__main__":
         env.metric_type = 'weighted_shortest'
         # env.plot_topology()
         for i in range(num_simulation):
-            s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type, threshold=threshold)
+            s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive,
+                             proactive_type=proactive_type, threshold=threshold)
             for _ in range(max_time_step):
                 _, weighted_shortest_reward, _, _, info = env.step(action)
             weighted_shortest_average_reward += weighted_shortest_reward
@@ -900,6 +978,7 @@ if __name__ == "__main__":
                 weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
                 weighted_shortest_average_proactive_used_keys += env.proactive_key_consume
                 weighted_shortest_average_proactive_gen_keys += env.proactive_key_generation
+                weighted_shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
         # env.plot_topology()
@@ -937,6 +1016,7 @@ if __name__ == "__main__":
         shortest_average_proactive_keys /= num_simulation
         shortest_average_proactive_used_keys /= num_simulation
         shortest_average_proactive_gen_keys /= num_simulation
+        shortest_average_proactive_expired_keys /= num_simulation
 
         weighted_shortest_average_reward /= num_simulation
         weighted_shortest_average_session_blocking /= num_simulation
@@ -948,6 +1028,7 @@ if __name__ == "__main__":
         weighted_shortest_average_proactive_keys /= num_simulation
         weighted_shortest_average_proactive_used_keys /= num_simulation
         weighted_shortest_average_proactive_gen_keys /= num_simulation
+        weighted_shortest_average_proactive_expired_keys /= num_simulation
 
         qber_average_reward /= num_simulation
         qber_average_session_blocking /= num_simulation
@@ -959,16 +1040,68 @@ if __name__ == "__main__":
         qber_average_proactive_keys /= num_simulation
         qber_average_proactive_used_keys /= num_simulation
         qber_average_proactive_gen_keys /= num_simulation
+        qber_average_proactive_expired_keys /= num_simulation
 
         # Print the results in a tabular format
+
         print("Average Results: ", threshold)
         print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}")
-        print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys/shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay/max_time_step:<4.3f}ms")
+        print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms")
         print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms")
         # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
         print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
         print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
+        print(f"{'Average proactive keys expired : ':<30}{(shortest_average_proactive_expired_keys):<10}{(weighted_shortest_average_proactive_expired_keys):<10}{(qber_average_proactive_expired_keys):<10}")
         print()
         # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
         # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
+        shortest_path_info['average_reward'].append(shortest_average_reward)
+        shortest_path_info['average_session_blocking'].append(shortest_average_session_blocking)
+        shortest_path_info['average_total_generation_keys'].append(shortest_average_total_generation_keys)
+        shortest_path_info['average_remaining_keys'].append(shortest_average_remaining_keys)
+        shortest_path_info['average_used_keys'].append(shortest_average_expired_keys)
+        shortest_path_info['average_expired_keys'].append(shortest_average_expired_keys)
+        shortest_path_info['average_delay'].append(shortest_average_delay / max_time_step)
+        if proactive:
+            shortest_path_info['average_proactive_keys'].append(shortest_average_proactive_keys)
+            shortest_path_info['average_proactive_used_keys'].append(shortest_average_proactive_used_keys)
+            shortest_path_info['average_proactive_gen_keys'].append(shortest_average_proactive_gen_keys)
+            shortest_path_info['average_proactive_expired_keys'].append(shortest_average_proactive_expired_keys)
+
+        weighted_shortest_path_info['average_reward'].append(weighted_shortest_average_reward)
+        weighted_shortest_path_info['average_session_blocking'].append(weighted_shortest_average_session_blocking)
+        weighted_shortest_path_info['average_total_generation_keys'].append(weighted_shortest_average_total_generation_keys)
+        weighted_shortest_path_info['average_remaining_keys'].append(weighted_shortest_average_remaining_keys)
+        weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_expired_keys)
+        weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
+        weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
+        if proactive:
+            weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
+            weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
+            weighted_shortest_path_info['average_proactive_gen_keys'].append(weighted_shortest_average_proactive_gen_keys)
+            weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
+
+    # logging
+    csv_file_path_1 = 'results/NSFNET_shortest_path_results_0902_05_10.csv'
+    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_0902_05_10.csv'
+
+    field_names = shortest_path_info.keys()
+
+    with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(field_names)
+
+        max_len = max(len(v) for v in shortest_path_info.values())
+        for i in range(max_len):
+            row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
+            writer.writerow(row)
+
+    with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(field_names)
+
+        max_len = max(len(v) for v in weighted_shortest_path_info.values())
+        for i in range(max_len):
+            row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
+            writer.writerow(row)
