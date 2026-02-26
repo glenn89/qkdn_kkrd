@@ -7,6 +7,7 @@ from random import random
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import topology_conf
 
@@ -28,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/COST266_requests_03.pkl"):
+    def save_requests(self, filename="requests/COST266_requests_05.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/COST266_requests_03.pkl"):
+    def load_requests(self, filename="requests/COST266_requests_05.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -53,7 +54,7 @@ class QuantumEnvironment:
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.30
+            self.dist_probability = 0.50
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -421,7 +422,7 @@ class QuantumEnvironment:
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = 5   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -458,7 +459,13 @@ class QuantumEnvironment:
 
         self.generate_topology()
         self.node_num_heat = np.zeros((len(self.G), len(self.G)))
-        self.all_link_delay = {edge: [] for edge in self.all_possible_edges}
+        self.all_link_delay = {edge: {} for edge in self.all_possible_edges}
+        for edge in self.all_possible_edges:
+            self.all_link_delay[edge] = {
+                'generated': 0,
+                'success': 0,
+                'delays': []
+            }
         self.count = 0
         self.no_path_count = 0
         self.cumulative_size = 5
@@ -539,6 +546,7 @@ class QuantumEnvironment:
             # 길이별 카운트 업데이트
             length = len(routing_path) - 1
             self.path_length[length] = self.path_length.get(length, 0) + 1
+            self.all_link_delay[(self.source_node, self.target_node)]['generated'] += 1
 
             if not routing_path:
                 self.session_blocking -= 1
@@ -561,7 +569,8 @@ class QuantumEnvironment:
                     delay += 20
                     step_delay += delay
                 # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", step_delay)
-                self.all_link_delay.setdefault((self.source_node, self.target_node), []).append(delay)
+                self.all_link_delay[(self.source_node, self.target_node)]['success'] += 1
+                self.all_link_delay[(self.source_node, self.target_node)]['delays'].append(delay)
         self.delay += step_delay / success_request if num_request > 0 and step_delay > 0 else step_delay
         # print("timestep: ", self.time_step, "num request: ", num_request, "delay: ", self.delay)
 
@@ -890,17 +899,17 @@ class QuantumEnvironment:
 
 if __name__ == "__main__":
     max_time_step = 200  # 1_000
-    threshold = 10            # 10
     proactive = True
     proactive_type = 'n-hop' # '1-hop', 'n-hop'
     topology_type = 'COST266'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 5
-    seed = [0, 10, 20, 30, 40]  # 42
+    num_simulation = 1
+    seed = [42, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(0, 21, 1)
+    # threshold_list = range(0, 21, 1)
+    threshold_list = [20]
 
     print("Simulation information")
     print("The number of max time step: ", max_time_step)
@@ -909,8 +918,6 @@ if __name__ == "__main__":
     if proactive:
         print("Proactive Type: ", proactive_type)
         print("Request gen probability: ", env.dist_probability)
-        print("threshold 1: ", env.lifetime_threshold_1)
-        print("threshold 4: ", env.lifetime_threshold_4)
     print()
 
     metrics = [
@@ -963,26 +970,33 @@ if __name__ == "__main__":
                 shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
 
-        #     shortest_path_all_link_delay.append({
-        #         k: (sum(v)/len(v) if v else 0)
-        #         for k, v in env.all_link_delay.items()
-        #     })
-        #
-        # shortest_path_all_link_average_delay = defaultdict(list)
-        # for sm in shortest_path_all_link_delay:
-        #     for k, v in sm.items():
-        #         shortest_path_all_link_average_delay[k].append(v)
-        #
-        # shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in shortest_path_all_link_average_delay.items()}
-        # with open("delay_results/shortest_path_all_link_average_delay_05_1-hop.csv", mode="w", newline="") as f:
-        #     writer = csv.writer(f)
-        #     writer.writerow(["source", "target", "delays"])  # 헤더 작성
-        #     for (src, dst), delays in shortest_path_all_link_average_delay.items():
-        #         # delay 리스트를 문자열로 묶어서 저장
-        #         writer.writerow([src, dst, delays])
+            shortest_path_all_link_delay.append({
+                k: (sum(v['delays'])/len(v['delays']) if v['delays'] else 0)
+                for k, v in env.all_link_delay.items()
+            })
+
+        rows = []
+        for (src, dst), requests in env.all_link_delay.items():
+            for d in requests['delays']:
+                rows.append([src, dst, d])
+        df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
+        df.to_csv('delay_results/COST266_shortest_path_all_link_delay_05_n-hop.csv', index=False)
+
+        shortest_path_all_link_average_delay = defaultdict(list)
+        for sm in shortest_path_all_link_delay:
+            for k, v in sm.items():
+                shortest_path_all_link_average_delay[k].append(v)
+
+        shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in shortest_path_all_link_average_delay.items()}
+        with open("delay_results/COST266_shortest_path_all_link_average_delay_05_n-hop.csv", mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
+            for (src, dst), delays in shortest_path_all_link_average_delay.items():
+                # delay 리스트를 문자열로 묶어서 저장
+                writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
+
         # env.plot_topology()
         # env.plot_heatmap()
-
         # Weighted shortest path simulation
         env.metric_type = 'weighted_shortest'
         # env.plot_topology()
@@ -1006,26 +1020,33 @@ if __name__ == "__main__":
                 weighted_shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
-        #     weighted_shortest_path_all_link_delay.append({
-        #         k: (sum(v) / len(v) if v else 0)
-        #         for k, v in env.all_link_delay.items()
-        #     })
-        #
-        # weighted_shortest_path_all_link_average_delay = defaultdict(list)
-        # for sm in weighted_shortest_path_all_link_delay:
-        #     for k, v in sm.items():
-        #         weighted_shortest_path_all_link_average_delay[k].append(v)
-        #
-        # weighted_shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in weighted_shortest_path_all_link_average_delay.items()}
-        # with open("delay_results/weighted_shortest_path_all_link_average_delay_05_1-hop.csv", mode="w", newline="") as f:
-        #     writer = csv.writer(f)
-        #     writer.writerow(["source", "target", "delays"])  # 헤더 작성
-        #     for (src, dst), delays in weighted_shortest_path_all_link_average_delay.items():
-        #         # delay 리스트를 문자열로 묶어서 저장
-        #         writer.writerow([src, dst, delays])
+            weighted_shortest_path_all_link_delay.append({
+                k: (sum(v['delays']) / len(v['delays']) if v['delays'] else 0)
+                for k, v in env.all_link_delay.items()
+            })
+
+        rows = []
+        for (src, dst), requests in env.all_link_delay.items():
+            for d in requests['delays']:
+                rows.append([src, dst, d])
+        df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
+        df.to_csv('delay_results/COST266_weighted_shortest_path_all_link_delay_05_n-hop.csv', index=False)
+
+        weighted_shortest_path_all_link_average_delay = defaultdict(list)
+        for sm in weighted_shortest_path_all_link_delay:
+            for k, v in sm.items():
+                weighted_shortest_path_all_link_average_delay[k].append(v)
+
+        weighted_shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in weighted_shortest_path_all_link_average_delay.items()}
+        with open("delay_results/COST266_weighted_shortest_path_all_link_average_delay_05_n-hop.csv", mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
+            for (src, dst), delays in weighted_shortest_path_all_link_average_delay.items():
+                # delay 리스트를 문자열로 묶어서 저장
+                writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
+
         # env.plot_topology()
         # env.plot_heatmap()
-
         # # QBER simulation
         # env.metric_type = 'weighted_life_shortest'
         # # env.plot_topology()
@@ -1086,6 +1107,11 @@ if __name__ == "__main__":
 
         # Print the results in a tabular format
 
+        if proactive:
+            print("threshold 1: ", env.lifetime_threshold_1)
+            print("threshold 4: ", env.lifetime_threshold_4)
+        print()
+
         print("Average Results: ", threshold)
         print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}")
         print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms")
@@ -1125,25 +1151,25 @@ if __name__ == "__main__":
             weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
 
     # logging
-    csv_file_path_1 = 'results/COST266_shortest_path_results_03_05.csv'
-    csv_file_path_2 = 'results/COST266_weighted_shortest_path_results_03_05.csv'
-
-    field_names = shortest_path_info.keys()
-
-    with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(field_names)
-
-        max_len = max(len(v) for v in shortest_path_info.values())
-        for i in range(max_len):
-            row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
-            writer.writerow(row)
-
-    with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(field_names)
-
-        max_len = max(len(v) for v in weighted_shortest_path_info.values())
-        for i in range(max_len):
-            row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
-            writer.writerow(row)
+    # csv_file_path_1 = 'results/COST266_shortest_path_results_01_15.csv'
+    # csv_file_path_2 = 'results/COST266_weighted_shortest_path_results_01_15.csv'
+    #
+    # field_names = shortest_path_info.keys()
+    #
+    # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow(field_names)
+    #
+    #     max_len = max(len(v) for v in shortest_path_info.values())
+    #     for i in range(max_len):
+    #         row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
+    #         writer.writerow(row)
+    #
+    # with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     writer.writerow(field_names)
+    #
+    #     max_len = max(len(v) for v in weighted_shortest_path_info.values())
+    #     for i in range(max_len):
+    #         row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
+    #         writer.writerow(row)
