@@ -557,7 +557,7 @@ class QuantumEnvironment:
                 success_request += 1
                 self.reward += 1
                 delay = 0
-                step_hops = len(routing_path) - 1
+                step_hops += len(routing_path) - 1
                 if len(routing_path) > 2:
                     for node in routing_path[1:-1]:
                         # self.node_num_heat[routing_path[i]][routing_path[i+1]] += 1
