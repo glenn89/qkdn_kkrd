@@ -29,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/COST266_requests_03.pkl"):
+    def save_requests(self, filename="requests/NSFNET_requests_03.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/COST266_requests_03.pkl"):
+    def load_requests(self, filename="requests/NSFNET_requests_03.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -101,6 +101,7 @@ class QuantumEnvironment:
         self.used_keys = 0
         self.expired_keys = 0
         self.delay = 0
+        self.hops = 0
 
         self.k = 0
         self.reward = 0
@@ -453,6 +454,7 @@ class QuantumEnvironment:
         self.used_keys = 0
         self.expired_keys = 0
         self.delay = 0
+        self.hops = 0
         self.k = 5
         self.reward = 0
         self.alpha = 0.0001
@@ -516,6 +518,7 @@ class QuantumEnvironment:
         #     # self.num_request = np.random.randint(1, 2, 1)[0]
 
         step_delay = 0
+        step_hops = 0
         success_request = 0
         # num_request = max(0, int(np.random.normal(loc=self.num_request, scale=self.num_request_scale, size=1)))
         # num_request = np.random.randint(0, self.num_request)
@@ -554,6 +557,7 @@ class QuantumEnvironment:
                 success_request += 1
                 self.reward += 1
                 delay = 0
+                step_hops = len(routing_path) - 1
                 if len(routing_path) > 2:
                     for node in routing_path[1:-1]:
                         # self.node_num_heat[routing_path[i]][routing_path[i+1]] += 1
@@ -572,6 +576,7 @@ class QuantumEnvironment:
                 self.all_link_delay[(self.source_node, self.target_node)]['success'] += 1
                 self.all_link_delay[(self.source_node, self.target_node)]['delays'].append(delay)
         self.delay += step_delay / success_request if num_request > 0 and step_delay > 0 else step_delay
+        self.hops += step_hops / success_request if success_request > 0 and step_hops > 0 else step_hops
         # print("timestep: ", self.time_step, "num request: ", num_request, "delay: ", self.delay)
 
             # self.source_node, self.target_node = 1, 9
@@ -616,6 +621,7 @@ class QuantumEnvironment:
             'expired_keys': self.expired_keys,
             'graph': self.G,
             'delay': self.delay,
+            'hops': self.hops,
             'path_length': self.path_length,
             'heat_map': self.node_num_heat,
             'all_link_delay': self.all_link_delay
@@ -900,16 +906,16 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     max_time_step = 200  # 1_000
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 1
-    seed = [42, 10, 20, 30, 40]  # 42
+    num_simulation = 10
+    seed = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    # threshold_list = range(0, 21, 1)
-    threshold_list = [20]
+    threshold_list = range(0, 21, 1)
+    # threshold_list = [20]
 
     print("Simulation information")
     print("The number of max time step: ", max_time_step)
@@ -923,7 +929,7 @@ if __name__ == "__main__":
     metrics = [
         "average_reward", "average_session_blocking", "average_total_generation_keys",
         "average_remaining_keys", "average_used_keys", "average_expired_keys",
-        "average_delay", "average_proactive_keys", "average_proactive_used_keys",
+        "average_delay", "average_hops", "average_proactive_keys", "average_proactive_used_keys",
         "average_proactive_gen_keys", "average_proactive_expired_keys"
     ]
 
@@ -941,7 +947,7 @@ if __name__ == "__main__":
         weighted_shortest_average_remaining_keys, shortest_average_remaining_keys, qber_average_remaining_keys, num_key_average_remaining_keys, combination_average_remaining_keys = 0, 0, 0, 0, 0
         weighted_shortest_average_used_keys, shortest_average_used_keys, qber_average_used_keys, num_key_average_used_keys, combination_average_used_keys = 0, 0, 0, 0, 0
         weighted_shortest_average_expired_keys, shortest_average_expired_keys, qber_average_expired_keys, num_key_average_expired_keys, combination_average_expired_keys = 0, 0, 0, 0, 0
-        weighted_shortest_average_delay, shortest_average_delay, qber_average_delay = 0, 0, 0
+        weighted_shortest_average_delay, weighted_shortest_average_hops, shortest_average_delay, shortest_average_hops, qber_average_delay = 0, 0, 0, 0, 0
         weighted_shortest_average_proactive_keys, shortest_average_proactive_keys, qber_average_proactive_keys = 0, 0, 0
         weighted_shortest_average_proactive_used_keys, shortest_average_proactive_used_keys, qber_average_proactive_used_keys = 0, 0, 0
         weighted_shortest_average_proactive_gen_keys, shortest_average_proactive_gen_keys, qber_average_proactive_gen_keys = 0, 0, 0
@@ -950,50 +956,51 @@ if __name__ == "__main__":
         # Shortest path simulation
         env.metric_type = 'simple_shortest'
         # env.plot_topology()
-        for i in range(num_simulation):
-            env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type,
-                      threshold=threshold)
-            for _ in range(max_time_step):
-                _, shortest_reward, _, _, info = env.step(action)
-            shortest_average_reward += shortest_reward
-            shortest_average_session_blocking += info['session_blocking']
-            shortest_average_total_generation_keys += info['total_generation_keys']
-            shortest_average_remaining_keys += info['remaining_keys']
-            shortest_average_used_keys += info['used_keys']
-            shortest_average_expired_keys += info['expired_keys']
-            shortest_average_delay += info['delay']
-            if proactive:
-                shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
-                shortest_average_proactive_keys += shortest_proactive_keys_ratio
-                shortest_average_proactive_used_keys += env.proactive_key_consume
-                shortest_average_proactive_gen_keys += env.proactive_key_generation
-                shortest_average_proactive_expired_keys += env.proactive_key_expired
+        # for i in range(num_simulation):
+        #     env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive, proactive_type=proactive_type,
+        #               threshold=threshold)
+            # for _ in range(max_time_step):
+            #     _, shortest_reward, _, _, info = env.step(action)
+            # shortest_average_reward += shortest_reward
+            # shortest_average_session_blocking += info['session_blocking']
+            # shortest_average_total_generation_keys += info['total_generation_keys']
+            # shortest_average_remaining_keys += info['remaining_keys']
+            # shortest_average_used_keys += info['used_keys']
+            # shortest_average_expired_keys += info['expired_keys']
+            # shortest_average_delay += info['delay']
+            # shortest_average_hops += info['hops']
+            # if proactive:
+            #     shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
+            #     shortest_average_proactive_keys += shortest_proactive_keys_ratio
+            #     shortest_average_proactive_used_keys += env.proactive_key_consume
+            #     shortest_average_proactive_gen_keys += env.proactive_key_generation
+            #     shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("SP: ", env.proactive_key_generation, env.proactive_key_consume, shortest_proactive_keys_ratio * 100)
 
-            shortest_path_all_link_delay.append({
-                k: (sum(v['delays'])/len(v['delays']) if v['delays'] else 0)
-                for k, v in env.all_link_delay.items()
-            })
-
-        rows = []
-        for (src, dst), requests in env.all_link_delay.items():
-            for d in requests['delays']:
-                rows.append([src, dst, d])
-        df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
-        df.to_csv('delay_results/COST266_shortest_path_all_link_delay_03_n-hop.csv', index=False)
-
-        shortest_path_all_link_average_delay = defaultdict(list)
-        for sm in shortest_path_all_link_delay:
-            for k, v in sm.items():
-                shortest_path_all_link_average_delay[k].append(v)
-
-        shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in shortest_path_all_link_average_delay.items()}
-        with open("delay_results/COST266_shortest_path_all_link_average_delay_03_n-hop.csv", mode="w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
-            for (src, dst), delays in shortest_path_all_link_average_delay.items():
-                # delay 리스트를 문자열로 묶어서 저장
-                writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
+        #     shortest_path_all_link_delay.append({
+        #         k: (sum(v['delays'])/len(v['delays']) if v['delays'] else 0)
+        #         for k, v in env.all_link_delay.items()
+        #     })
+        #
+        # rows = []
+        # for (src, dst), requests in env.all_link_delay.items():
+        #     for d in requests['delays']:
+        #         rows.append([src, dst, d])
+        # df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
+        # df.to_csv('delay_results/COST266_shortest_path_all_link_delay_03_n-hop_40.csv', index=False)
+        #
+        # shortest_path_all_link_average_delay = defaultdict(list)
+        # for sm in shortest_path_all_link_delay:
+        #     for k, v in sm.items():
+        #         shortest_path_all_link_average_delay[k].append(v)
+        #
+        # shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in shortest_path_all_link_average_delay.items()}
+        # with open("delay_results/COST266_shortest_path_all_link_average_delay_03_n-hop_40.csv", mode="w", newline="") as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
+        #     for (src, dst), delays in shortest_path_all_link_average_delay.items():
+        #         # delay 리스트를 문자열로 묶어서 저장
+        #         writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
 
         # env.plot_topology()
         # env.plot_heatmap()
@@ -1012,6 +1019,7 @@ if __name__ == "__main__":
             weighted_shortest_average_used_keys += info['used_keys']
             weighted_shortest_average_expired_keys += info['expired_keys']
             weighted_shortest_average_delay += info['delay']
+            weighted_shortest_average_hops += info['hops']
             if proactive:
                 weighted_shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
                 weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
@@ -1020,30 +1028,30 @@ if __name__ == "__main__":
                 weighted_shortest_average_proactive_expired_keys += env.proactive_key_expired
                 # print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
-            weighted_shortest_path_all_link_delay.append({
-                k: (sum(v['delays']) / len(v['delays']) if v['delays'] else 0)
-                for k, v in env.all_link_delay.items()
-            })
-
-        rows = []
-        for (src, dst), requests in env.all_link_delay.items():
-            for d in requests['delays']:
-                rows.append([src, dst, d])
-        df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
-        df.to_csv('delay_results/COST266_weighted_shortest_path_all_link_delay_03_n-hop.csv', index=False)
-
-        weighted_shortest_path_all_link_average_delay = defaultdict(list)
-        for sm in weighted_shortest_path_all_link_delay:
-            for k, v in sm.items():
-                weighted_shortest_path_all_link_average_delay[k].append(v)
-
-        weighted_shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in weighted_shortest_path_all_link_average_delay.items()}
-        with open("delay_results/COST266_weighted_shortest_path_all_link_average_delay_03_n-hop.csv", mode="w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
-            for (src, dst), delays in weighted_shortest_path_all_link_average_delay.items():
-                # delay 리스트를 문자열로 묶어서 저장
-                writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
+        #     weighted_shortest_path_all_link_delay.append({
+        #         k: (sum(v['delays']) / len(v['delays']) if v['delays'] else 0)
+        #         for k, v in env.all_link_delay.items()
+        #     })
+        #
+        # rows = []
+        # for (src, dst), requests in env.all_link_delay.items():
+        #     for d in requests['delays']:
+        #         rows.append([src, dst, d])
+        # df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
+        # df.to_csv('delay_results/COST266_weighted_shortest_path_all_link_delay_03_n-hop_40.csv', index=False)
+        #
+        # weighted_shortest_path_all_link_average_delay = defaultdict(list)
+        # for sm in weighted_shortest_path_all_link_delay:
+        #     for k, v in sm.items():
+        #         weighted_shortest_path_all_link_average_delay[k].append(v)
+        #
+        # weighted_shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in weighted_shortest_path_all_link_average_delay.items()}
+        # with open("delay_results/COST266_weighted_shortest_path_all_link_average_delay_03_n-hop_40.csv", mode="w", newline="") as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
+        #     for (src, dst), delays in weighted_shortest_path_all_link_average_delay.items():
+        #         # delay 리스트를 문자열로 묶어서 저장
+        #         writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
 
         # env.plot_topology()
         # env.plot_heatmap()
@@ -1069,17 +1077,18 @@ if __name__ == "__main__":
         #         qber_average_proactive_gen_keys += env.proactive_key_generation
         #         # print("LSP: ", env.proactive_key_generation, env.proactive_key_consume, qber_proactive_keys_ratio * 100)
 
-        shortest_average_reward /= num_simulation
-        shortest_average_session_blocking /= num_simulation
-        shortest_average_total_generation_keys /= num_simulation
-        shortest_average_remaining_keys /= num_simulation
-        shortest_average_used_keys /= num_simulation
-        shortest_average_expired_keys /= num_simulation
-        shortest_average_delay /= num_simulation
-        shortest_average_proactive_keys /= num_simulation
-        shortest_average_proactive_used_keys /= num_simulation
-        shortest_average_proactive_gen_keys /= num_simulation
-        shortest_average_proactive_expired_keys /= num_simulation
+        # shortest_average_reward /= num_simulation
+        # shortest_average_session_blocking /= num_simulation
+        # shortest_average_total_generation_keys /= num_simulation
+        # shortest_average_remaining_keys /= num_simulation
+        # shortest_average_used_keys /= num_simulation
+        # shortest_average_expired_keys /= num_simulation
+        # shortest_average_delay /= num_simulation
+        # shortest_average_hops /= num_simulation
+        # shortest_average_proactive_keys /= num_simulation
+        # shortest_average_proactive_used_keys /= num_simulation
+        # shortest_average_proactive_gen_keys /= num_simulation
+        # shortest_average_proactive_expired_keys /= num_simulation
 
         weighted_shortest_average_reward /= num_simulation
         weighted_shortest_average_session_blocking /= num_simulation
@@ -1088,22 +1097,23 @@ if __name__ == "__main__":
         weighted_shortest_average_used_keys /= num_simulation
         weighted_shortest_average_expired_keys /= num_simulation
         weighted_shortest_average_delay /= num_simulation
+        weighted_shortest_average_hops /= num_simulation
         weighted_shortest_average_proactive_keys /= num_simulation
         weighted_shortest_average_proactive_used_keys /= num_simulation
         weighted_shortest_average_proactive_gen_keys /= num_simulation
         weighted_shortest_average_proactive_expired_keys /= num_simulation
-
-        qber_average_reward /= num_simulation
-        qber_average_session_blocking /= num_simulation
-        qber_average_total_generation_keys /= num_simulation
-        qber_average_remaining_keys /= num_simulation
-        qber_average_used_keys /= num_simulation
-        qber_average_expired_keys /= num_simulation
-        qber_average_delay /= num_simulation
-        qber_average_proactive_keys /= num_simulation
-        qber_average_proactive_used_keys /= num_simulation
-        qber_average_proactive_gen_keys /= num_simulation
-        qber_average_proactive_expired_keys /= num_simulation
+        #
+        # qber_average_reward /= num_simulation
+        # qber_average_session_blocking /= num_simulation
+        # qber_average_total_generation_keys /= num_simulation
+        # qber_average_remaining_keys /= num_simulation
+        # qber_average_used_keys /= num_simulation
+        # qber_average_expired_keys /= num_simulation
+        # qber_average_delay /= num_simulation
+        # qber_average_proactive_keys /= num_simulation
+        # qber_average_proactive_used_keys /= num_simulation
+        # qber_average_proactive_gen_keys /= num_simulation
+        # qber_average_proactive_expired_keys /= num_simulation
 
         # Print the results in a tabular format
 
@@ -1113,9 +1123,9 @@ if __name__ == "__main__":
         print()
 
         print("Average Results: ", threshold)
-        print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}")
-        print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms")
-        print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms")
+        print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}{'Average hops':<20}")
+        # print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{shortest_average_hops / max_time_step:<4.2f}")
+        print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{weighted_shortest_average_hops / max_time_step:<4.2f}")
         # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
         print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
         print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
@@ -1124,18 +1134,19 @@ if __name__ == "__main__":
         # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
         # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
 
-        shortest_path_info['average_reward'].append(shortest_average_reward)
-        shortest_path_info['average_session_blocking'].append(shortest_average_session_blocking)
-        shortest_path_info['average_total_generation_keys'].append(shortest_average_total_generation_keys)
-        shortest_path_info['average_remaining_keys'].append(shortest_average_remaining_keys)
-        shortest_path_info['average_used_keys'].append(shortest_average_expired_keys)
-        shortest_path_info['average_expired_keys'].append(shortest_average_expired_keys)
-        shortest_path_info['average_delay'].append(shortest_average_delay / max_time_step)
-        if proactive:
-            shortest_path_info['average_proactive_keys'].append(shortest_average_proactive_keys)
-            shortest_path_info['average_proactive_used_keys'].append(shortest_average_proactive_used_keys)
-            shortest_path_info['average_proactive_gen_keys'].append(shortest_average_proactive_gen_keys)
-            shortest_path_info['average_proactive_expired_keys'].append(shortest_average_proactive_expired_keys)
+        # shortest_path_info['average_reward'].append(shortest_average_reward)
+        # shortest_path_info['average_session_blocking'].append(shortest_average_session_blocking)
+        # shortest_path_info['average_total_generation_keys'].append(shortest_average_total_generation_keys)
+        # shortest_path_info['average_remaining_keys'].append(shortest_average_remaining_keys)
+        # shortest_path_info['average_used_keys'].append(shortest_average_expired_keys)
+        # shortest_path_info['average_expired_keys'].append(shortest_average_expired_keys)
+        # shortest_path_info['average_delay'].append(shortest_average_delay / max_time_step)
+        # shortest_path_info['average_hops'].append(shortest_average_hops / max_time_step)
+        # if proactive:
+        #     shortest_path_info['average_proactive_keys'].append(shortest_average_proactive_keys)
+        #     shortest_path_info['average_proactive_used_keys'].append(shortest_average_proactive_used_keys)
+        #     shortest_path_info['average_proactive_gen_keys'].append(shortest_average_proactive_gen_keys)
+        #     shortest_path_info['average_proactive_expired_keys'].append(shortest_average_proactive_expired_keys)
 
         weighted_shortest_path_info['average_reward'].append(weighted_shortest_average_reward)
         weighted_shortest_path_info['average_session_blocking'].append(weighted_shortest_average_session_blocking)
@@ -1144,6 +1155,7 @@ if __name__ == "__main__":
         weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_expired_keys)
         weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
         weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
+        weighted_shortest_path_info['average_hops'].append(weighted_shortest_average_hops / max_time_step)
         if proactive:
             weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
             weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
@@ -1151,11 +1163,11 @@ if __name__ == "__main__":
             weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
 
     # logging
-    # csv_file_path_1 = 'results/COST266_shortest_path_results_01_15.csv'
-    # csv_file_path_2 = 'results/COST266_weighted_shortest_path_results_01_15.csv'
-    #
-    # field_names = shortest_path_info.keys()
-    #
+    # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
+    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_03_1-hop_10.csv'
+
+    field_names = shortest_path_info.keys()
+
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
     #     writer = csv.writer(csvfile)
     #     writer.writerow(field_names)
@@ -1164,12 +1176,12 @@ if __name__ == "__main__":
     #     for i in range(max_len):
     #         row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
     #         writer.writerow(row)
-    #
-    # with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
-    #     writer = csv.writer(csvfile)
-    #     writer.writerow(field_names)
-    #
-    #     max_len = max(len(v) for v in weighted_shortest_path_info.values())
-    #     for i in range(max_len):
-    #         row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
-    #         writer.writerow(row)
+
+    with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(field_names)
+
+        max_len = max(len(v) for v in weighted_shortest_path_info.values())
+        for i in range(max_len):
+            row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
+            writer.writerow(row)

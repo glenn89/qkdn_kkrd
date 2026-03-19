@@ -29,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/COST266_requests_05.pkl"):
+    def save_requests(self, filename="requests/NSFNET_requests_03.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/COST266_requests_05.pkl"):
+    def load_requests(self, filename="requests/NSFNET_requests_03.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -52,9 +52,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.50
+            self.dist_probability = 0.30
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.50
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -900,12 +900,12 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     max_time_step = 200  # 1_000
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
     num_simulation = 1
-    seed = [42, 10, 20, 30, 40]  # 42
+    seed = [40, 10, 20, 30, 40]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)
@@ -980,7 +980,7 @@ if __name__ == "__main__":
             for d in requests['delays']:
                 rows.append([src, dst, d])
         df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
-        df.to_csv('delay_results/COST266_shortest_path_all_link_delay_05_n-hop.csv', index=False)
+        df.to_csv(f'delay_results/NSFNET_shortest_path_all_link_delay_05_1-hop_40.csv', index=False)
 
         shortest_path_all_link_average_delay = defaultdict(list)
         for sm in shortest_path_all_link_delay:
@@ -988,7 +988,7 @@ if __name__ == "__main__":
                 shortest_path_all_link_average_delay[k].append(v)
 
         shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in shortest_path_all_link_average_delay.items()}
-        with open("delay_results/COST266_shortest_path_all_link_average_delay_05_n-hop.csv", mode="w", newline="") as f:
+        with open("delay_results/NSFNET_shortest_path_all_link_average_delay_05_1-hop_40.csv", mode="w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
             for (src, dst), delays in shortest_path_all_link_average_delay.items():
@@ -1030,20 +1030,43 @@ if __name__ == "__main__":
             for d in requests['delays']:
                 rows.append([src, dst, d])
         df = pd.DataFrame(rows, columns=['src', 'dst', 'delay'])
-        df.to_csv('delay_results/COST266_weighted_shortest_path_all_link_delay_05_n-hop.csv', index=False)
+        df.to_csv('delay_results/NSFNET_weighted_shortest_path_all_link_delay_03_1-hop_40.csv', index=False)
 
-        weighted_shortest_path_all_link_average_delay = defaultdict(list)
-        for sm in weighted_shortest_path_all_link_delay:
-            for k, v in sm.items():
-                weighted_shortest_path_all_link_average_delay[k].append(v)
-
-        weighted_shortest_path_all_link_average_delay = {k: sum(v) / len(v) for k, v in weighted_shortest_path_all_link_average_delay.items()}
-        with open("delay_results/COST266_weighted_shortest_path_all_link_average_delay_05_n-hop.csv", mode="w", newline="") as f:
+        # weighted_shortest_path_all_link_average_delay = defaultdict(list)
+        # for sm in weighted_shortest_path_all_link_delay:
+        #     for k, v in sm.items():
+        #         weighted_shortest_path_all_link_average_delay[k].append(v)
+        #
+        # original_delay_dict = weighted_shortest_path_all_link_average_delay.copy()
+        # weighted_shortest_path_all_link_average_delay = {
+        #     k: sum(v) / len(v) for k, v in original_delay_dict.items()
+        # }
+        # weighted_shortest_path_all_link_variance = {
+        #     k: sum((x - weighted_shortest_path_all_link_average_delay[k]) ** 2 for x in v) / len(v)
+        #     for k, v in original_delay_dict.items()
+        # }
+        with open("delay_results/NSFNET_weighted_shortest_path_all_link_average_delay_03_1-hop_40.csv", mode="w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["source", "target", "generated", "success", "delays"])  # 헤더 작성
-            for (src, dst), delays in weighted_shortest_path_all_link_average_delay.items():
-                # delay 리스트를 문자열로 묶어서 저장
-                writer.writerow([src, dst, env.all_link_delay[(src, dst)]['generated'], env.all_link_delay[(src, dst)]['success'], delays])
+            writer.writerow(["source", "target", "generated", "success", "avg_delay", "variance"])
+
+            for (src, dst), requests in env.all_link_delay.items():
+                delay_list = requests['delays']
+
+                if len(delay_list) == 0:
+                    avg_delay = 0
+                    variance = 0
+                else:
+                    avg_delay = sum(delay_list) / len(delay_list)
+                    variance = sum((x - avg_delay) ** 2 for x in delay_list) / len(delay_list)
+
+                writer.writerow([
+                    src,
+                    dst,
+                    requests['generated'],
+                    requests['success'],
+                    avg_delay,
+                    variance
+                ])
 
         # env.plot_topology()
         # env.plot_heatmap()
