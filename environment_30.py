@@ -29,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def save_requests(self, filename="requests/NSFNET_1000_requests_03.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def load_requests(self, filename="requests/NSFNET_1000_requests_03.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -52,9 +52,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -118,7 +118,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.save_requests()
+        self.requests.load_requests()
 
 
     def generate_topology(self):
@@ -928,7 +928,7 @@ if __name__ == "__main__":
     seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(0, 21, 1)
+    threshold_list = range(0, 16, 1)
     # threshold_list = [20]
 
     print("Simulation information")
@@ -1200,7 +1200,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_01_1-hop.csv'
+    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_03_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
