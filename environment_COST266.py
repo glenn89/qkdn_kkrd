@@ -29,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_requests_01.pkl"):
+    def save_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_requests_01.pkl"):
+    def load_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -118,7 +118,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.load_requests()
+        self.requests.save_requests()
 
 
     def generate_topology(self):
@@ -423,7 +423,7 @@ class QuantumEnvironment:
 
         self.generate_key_time_slot = 1
         self.generate_key_size = 10
-        self.generate_key_scale = 2
+        self.generate_key_scale = 3
         # max_test_threshold = 10  # 실험에서 쓰는 최대 threshold 값
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
@@ -918,7 +918,7 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    max_time_step = 200  # 1_000
+    max_time_step = 1_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     topology_type = 'NSFNET'
