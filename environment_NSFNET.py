@@ -29,11 +29,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_requests_03.pkl"):
+    def save_requests(self, filename="requests/NSFNET_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_requests_03.pkl"):
+    def load_requests(self, filename="requests/NSFNET_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -52,9 +52,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.30
+            self.dist_probability = 0.10
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.30
+            self.dist_probability = 0.10
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -97,6 +97,10 @@ class QuantumEnvironment:
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
         self.proactive_key_expired = 0
+        self.proactive_key_consume_for_n_hop = 0
+        self.n_hop_proactive_key_generation = 0
+        self.n_hop_proactive_key_consume = 0
+        self.n_hop_proactive_key_expired = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.expired_keys = 0
@@ -324,7 +328,7 @@ class QuantumEnvironment:
 
                 # if enough 1-hop keys and lifetime gap < threshold
                 if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold_4:
-                    self.proactive_key_generation += self.consume_key_size
+                    self.n_hop_proactive_key_generation += self.consume_key_size
                     for i in range(len(path) - 1):
                         sorted_key = tuple(sorted((path[i], path[i+1])))
                         # self.used_keys += self.consume_key_size
@@ -332,6 +336,7 @@ class QuantumEnvironment:
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
                         self.node_num_heat[path[i]][path[i+1]] -= 1
                         self.node_num_heat[path[i+1]][path[i]] -= 1
+                        self.proactive_key_consume_for_n_hop += 1
                     if edge in self.logi_key_pool:
                         self.logi_key_pool[edge].extend([min_life] * self.consume_key_size)
                         self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
@@ -450,6 +455,9 @@ class QuantumEnvironment:
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
         self.proactive_key_expired = 0
+        self.n_hop_proactive_key_generation = 0
+        self.n_hop_proactive_key_consume = 0
+        self.n_hop_proactive_key_expired = 0
         self.remaining_keys = 0
         self.used_keys = 0
         self.expired_keys = 0
@@ -601,7 +609,10 @@ class QuantumEnvironment:
             self.logi_G.edges[sorted_key]['num_key'] = len(self.logi_key_pool[sorted_key])
             self.expired_keys += original_len_logi - len(self.logi_key_pool[sorted_key])
             if sorted_key in self.all_possible_edges:
-                self.proactive_key_expired += original_len_logi - len(self.logi_key_pool[sorted_key])
+                if sorted_key in self.G.edges():
+                    self.proactive_key_expired += original_len_logi - len(self.logi_key_pool[sorted_key])
+                else:
+                    self.n_hop_proactive_key_expired += original_len_logi - len(self.logi_key_pool[sorted_key])
 
         if self.time_step != 0 and self.time_step % self.generate_key_time_slot == 0:
             self.key_generation()
@@ -820,8 +831,11 @@ class QuantumEnvironment:
             sorted_key = tuple(sorted((routing_path[i], routing_path[i + 1])))
             self.logi_G[sorted_key[0]][sorted_key[1]]['num_key'] -= self.consume_key_size
             self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
-            if sorted_key in self.G.edges:
-                self.proactive_key_consume += 1
+            if sorted_key in self.all_possible_edges:
+                if sorted_key in self.G.edges():
+                    self.proactive_key_consume += 1
+                else:
+                    self.n_hop_proactive_key_consume += 1
             if len(self.logi_key_pool[sorted_key]) != self.logi_G[sorted_key[0]][sorted_key[1]]['num_key']:
                 print("!!!!!!!!!!!!!!!!!!!!!", sorted_key)
                 print(len(self.logi_key_pool[sorted_key]), self.logi_G[sorted_key[0]][sorted_key[1]]['num_key'])
@@ -910,8 +924,8 @@ if __name__ == "__main__":
     topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 10
-    seed = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]  # 42
+    num_simulation = 15
+    seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     threshold_list = range(0, 21, 1)
@@ -930,7 +944,8 @@ if __name__ == "__main__":
         "average_reward", "average_session_blocking", "average_total_generation_keys",
         "average_remaining_keys", "average_used_keys", "average_expired_keys",
         "average_delay", "average_hops", "average_proactive_keys", "average_proactive_used_keys",
-        "average_proactive_gen_keys", "average_proactive_expired_keys"
+        "average_proactive_gen_keys", "average_proactive_expired_keys", "average_proactive_used_keys_for_n_hop",
+        "average_n_hop_proactive_gen_keys", "average_n_hop_proactive_used_keys", "average_n_hop_proactive_expired_keys",
     ]
 
     shortest_path_info, weighted_shortest_path_info = [{k: [] for k in metrics} for _ in range(2)]
@@ -952,6 +967,10 @@ if __name__ == "__main__":
         weighted_shortest_average_proactive_used_keys, shortest_average_proactive_used_keys, qber_average_proactive_used_keys = 0, 0, 0
         weighted_shortest_average_proactive_gen_keys, shortest_average_proactive_gen_keys, qber_average_proactive_gen_keys = 0, 0, 0
         weighted_shortest_average_proactive_expired_keys, shortest_average_proactive_expired_keys, qber_average_proactive_expired_keys = 0, 0, 0
+        weighted_shortest_average_proactive_used_keys_for_n_hop, shortest_average_proactive_used_keys_for_n_hop, qber_average_proactive_used_keys_for_n_hop = 0, 0, 0
+        weighted_shortest_average_n_hop_proactive_used_keys, shortest_average_n_hop_proactive_used_keys, qber_average_n_hop_proactive_used_keys = 0, 0, 0
+        weighted_shortest_average_n_hop_proactive_gen_keys, shortest_average_n_hop_proactive_gen_keys, qber_average_n_hop_proactive_gen_keys = 0, 0, 0
+        weighted_shortest_average_n_hop_proactive_expired_keys, shortest_average_n_hop_proactive_expired_keys, qber_average_n_hop_proactive_expired_keys = 0, 0, 0
 
         # Shortest path simulation
         env.metric_type = 'simple_shortest'
@@ -1026,6 +1045,11 @@ if __name__ == "__main__":
                 weighted_shortest_average_proactive_used_keys += env.proactive_key_consume
                 weighted_shortest_average_proactive_gen_keys += env.proactive_key_generation
                 weighted_shortest_average_proactive_expired_keys += env.proactive_key_expired
+                weighted_shortest_average_proactive_used_keys_for_n_hop += env.proactive_key_consume_for_n_hop
+                weighted_shortest_average_n_hop_proactive_gen_keys += env.n_hop_proactive_key_generation
+                weighted_shortest_average_n_hop_proactive_used_keys += env.n_hop_proactive_key_consume
+                weighted_shortest_average_n_hop_proactive_expired_keys += env.n_hop_proactive_key_expired
+
                 # print("WSP: ", env.proactive_key_generation, env.proactive_key_consume, weighted_shortest_proactive_keys_ratio * 100)
 
         #     weighted_shortest_path_all_link_delay.append({
@@ -1102,6 +1126,10 @@ if __name__ == "__main__":
         weighted_shortest_average_proactive_used_keys /= num_simulation
         weighted_shortest_average_proactive_gen_keys /= num_simulation
         weighted_shortest_average_proactive_expired_keys /= num_simulation
+        weighted_shortest_average_proactive_used_keys_for_n_hop /= num_simulation
+        weighted_shortest_average_n_hop_proactive_gen_keys /= num_simulation
+        weighted_shortest_average_n_hop_proactive_used_keys /= num_simulation
+        weighted_shortest_average_n_hop_proactive_expired_keys /= num_simulation
         #
         # qber_average_reward /= num_simulation
         # qber_average_session_blocking /= num_simulation
@@ -1129,7 +1157,11 @@ if __name__ == "__main__":
         # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
         print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
         print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
-        print(f"{'Average proactive keys expired : ':<30}{(shortest_average_proactive_expired_keys):<10}{(weighted_shortest_average_proactive_expired_keys):<10}{(qber_average_proactive_expired_keys):<10}")
+        print(f"{'Average proactive keys expired : ':<30}{(weighted_shortest_average_proactive_expired_keys):<10}")
+        print(f"{'Average proactive keys used for n_hop : ':<30}{(weighted_shortest_average_proactive_used_keys_for_n_hop):<10}")
+        print(f"{'Average n_hop proactive keys generation : ':<30}{(weighted_shortest_average_n_hop_proactive_gen_keys):<10}")
+        print(f"{'Average n_hop proactive keys used : ':<30}{(weighted_shortest_average_n_hop_proactive_used_keys):<10}")
+        print(f"{'Average n_hop proactive keys expired : ':<30}{(weighted_shortest_average_n_hop_proactive_expired_keys):<10}")
         print()
         # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
         # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
@@ -1161,13 +1193,16 @@ if __name__ == "__main__":
             weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
             weighted_shortest_path_info['average_proactive_gen_keys'].append(weighted_shortest_average_proactive_gen_keys)
             weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
+            weighted_shortest_path_info['average_proactive_used_keys_for_n_hop'].append(weighted_shortest_average_proactive_used_keys_for_n_hop)
+            weighted_shortest_path_info['average_n_hop_proactive_gen_keys'].append(weighted_shortest_average_n_hop_proactive_gen_keys)
+            weighted_shortest_path_info['average_n_hop_proactive_used_keys'].append(weighted_shortest_average_n_hop_proactive_used_keys)
+            weighted_shortest_path_info['average_n_hop_proactive_expired_keys'].append(weighted_shortest_average_n_hop_proactive_expired_keys)
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_03_1-hop_10.csv'
+    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_01_1-hop.csv'
 
     field_names = shortest_path_info.keys()
-
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
     #     writer = csv.writer(csvfile)
     #     writer.writerow(field_names)
