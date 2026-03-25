@@ -1,5 +1,6 @@
 import copy
 import csv
+import math
 import pickle
 from collections import defaultdict
 from itertools import combinations
@@ -162,7 +163,8 @@ class QuantumEnvironment:
         edges = list(self.expand_G.edges(data=True))
         for u, v, attr in edges:
             if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
-                num_intermediates = int(attr['distance'] / 100)
+                num_spans = math.ceil(attr['distance'] / 100)
+                num_intermediates = max(0, num_spans - 1)
                 path_nodes = [u]
 
                 # n개의 중간 노드 생성

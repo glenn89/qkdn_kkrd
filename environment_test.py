@@ -497,6 +497,11 @@ class QuantumEnvironment:
         info = {}
         # self.observation_space = spaces
 
+        print("User Network node: ", len(self.G.nodes()), self.G.nodes())
+        print("User Network edge: ", len(self.G.edges()), self.G.edges())
+        print("Expned Network node: ", len(self.expand_G.nodes()))
+        print("Expned Network edge: ", len(self.expand_G.edges()))
+
         return state, info
 
     def step(self, action):
@@ -923,14 +928,14 @@ if __name__ == "__main__":
     max_time_step = 1_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    topology_type = 'NSFNET'
+    topology_type = 'COST266'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
     num_simulation = 15
     seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(0, 21, 1)
+    threshold_list = range(0, 16, 1)
     # threshold_list = [20]
 
     print("Simulation information")
@@ -1202,7 +1207,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_01_1-hop.csv'
+    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_05_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
