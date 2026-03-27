@@ -457,6 +457,7 @@ class QuantumEnvironment:
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
         self.proactive_key_expired = 0
+        self.proactive_key_consume_for_n_hop = 0
         self.n_hop_proactive_key_generation = 0
         self.n_hop_proactive_key_consume = 0
         self.n_hop_proactive_key_expired = 0
@@ -540,17 +541,17 @@ class QuantumEnvironment:
         # iu, ju = np.triu_indices(self.topology_conf['NUM_QKD_NODE'], k=1)  # (i<j)
         # keep = np.random.default_rng().random(iu.shape[0]) < self.dist_probability
         # requests = np.column_stack([iu[keep], ju[keep]]).astype(int)
+        if self.proactive:
+            self.update_logical_topology()
+            # edges_weights = [
+            #     f"({u}, {v}): {data.get('num_key', None)}"
+            #     for u, v, data in self.logi_G.edges(data=True)
+            # ]
+            # print("after")
+            # print(", ".join(edges_weights))
+            # print("time step: ", self.time_step, self.logi_key_pool)
         for src, dst in self.requests.requests[self.time_step]:
             self.source_node, self.target_node = int(src), int(dst)
-            if self.proactive:
-                self.update_logical_topology()
-                # edges_weights = [
-                #     f"({u}, {v}): {data.get('num_key', None)}"
-                #     for u, v, data in self.logi_G.edges(data=True)
-                # ]
-                # print("after")
-                # print(", ".join(edges_weights))
-                # print("time step: ", self.time_step, self.logi_key_pool)
             routing_path = self.find_routing_path()
             # print("time step: ", self.time_step, "routing path: ", routing_path, "node: ", self.source_node, self.target_node)
 
@@ -930,7 +931,7 @@ if __name__ == "__main__":
     seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
-    threshold_list = range(0, 16, 1)
+    threshold_list = range(0, 21, 1)
     # threshold_list = [20]
 
     print("Simulation information")

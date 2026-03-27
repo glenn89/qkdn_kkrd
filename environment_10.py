@@ -338,7 +338,8 @@ class QuantumEnvironment:
                         self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
                         self.node_num_heat[path[i]][path[i+1]] -= 1
                         self.node_num_heat[path[i+1]][path[i]] -= 1
-                        self.proactive_key_consume_for_n_hop += 1
+                        if sorted_key in self.G.edges():
+                            self.proactive_key_consume_for_n_hop += self.consume_key_size
                     if edge in self.logi_key_pool:
                         self.logi_key_pool[edge].extend([min_life] * self.consume_key_size)
                         self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
@@ -457,6 +458,7 @@ class QuantumEnvironment:
         self.proactive_key_generation = 0
         self.proactive_key_consume = 0
         self.proactive_key_expired = 0
+        self.proactive_key_consume_for_n_hop = 0
         self.n_hop_proactive_key_generation = 0
         self.n_hop_proactive_key_consume = 0
         self.n_hop_proactive_key_expired = 0
@@ -540,17 +542,17 @@ class QuantumEnvironment:
         # iu, ju = np.triu_indices(self.topology_conf['NUM_QKD_NODE'], k=1)  # (i<j)
         # keep = np.random.default_rng().random(iu.shape[0]) < self.dist_probability
         # requests = np.column_stack([iu[keep], ju[keep]]).astype(int)
+        if self.proactive:
+            self.update_logical_topology()
+            # edges_weights = [
+            #     f"({u}, {v}): {data.get('num_key', None)}"
+            #     for u, v, data in self.logi_G.edges(data=True)
+            # ]
+            # print("after")
+            # print(", ".join(edges_weights))
+            # print("time step: ", self.time_step, self.logi_key_pool)
         for src, dst in self.requests.requests[self.time_step]:
             self.source_node, self.target_node = int(src), int(dst)
-            if self.proactive:
-                self.update_logical_topology()
-                # edges_weights = [
-                #     f"({u}, {v}): {data.get('num_key', None)}"
-                #     for u, v, data in self.logi_G.edges(data=True)
-                # ]
-                # print("after")
-                # print(", ".join(edges_weights))
-                # print("time step: ", self.time_step, self.logi_key_pool)
             routing_path = self.find_routing_path()
             # print("time step: ", self.time_step, "routing path: ", routing_path, "node: ", self.source_node, self.target_node)
 
