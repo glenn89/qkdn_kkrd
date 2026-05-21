@@ -1,74 +1,65 @@
 import matplotlib.pyplot as plt
-import numpy as np
 
-# Scenario labels
-scenarios = [
-    "Remain key / distance",
-    "Remain key",
-    "Distance",
-    # "Non-proactive key generation",
-    # r"1-hop proactive key generation ($th_{1}=10$)",
-    # r"N-hop proactive key generation ($th_{1}=10$, $th_{4}=10$)",
+# Data
+labels = [
+    "Non-proactive key generation",
+    "1-hop proactive key generation",
+    "n-hop proactive key generation"
 ]
 
-# Success and blocking data for each scenario
-success_simple = np.array([76.337, 75.945, 75.1])
-success_weighted = np.array([97.288, 100.634, 108.1])
+values = [497.1375, 113.0173, 79.5904]
 
-# Calculate adjusted values: success + abs(blocking)
+colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
 
-# X-axis methods
-methods = ["Shortest path key relay", "Weighted shortest path key relay"]
-x = np.arange(len(methods))
+# Figure size
+plt.figure(figsize=(12, 8))
 
-# Colors for each scenario
-colors = ['#4E79A7', '#F28E2B', '#59A14F']
+# Bar plot
+bars = plt.bar(labels, values, color=colors, width=0.48)
 
-# Plot configuration
-width = 0.2
-plt.figure(figsize=(10, 6))
+# Y-axis label
+plt.ylabel("Average delay", fontsize=20)
 
-# # Plot hatched background bars (white face, colored edge)
-# for i, color in enumerate(colors):
-#     offset = (i - 1.5) * width
-#     plt.bar(x + offset,
-#             [adjusted_simple[i], adjusted_weighted[i]],
-#             width, facecolor='white', edgecolor=color, hatch='///', zorder=0)
+# Axis tick font size
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=18)
 
-# Plot main success bars
-bars = []
-for i, color in enumerate(colors):
-    offset = (i - 1.5) * width
-    bar = plt.bar(x + offset,
-                  [success_simple[i], success_weighted[i]],
-                  width, color=color, label=scenarios[i], zorder=1)
-    bars.append(bar)
+# Y-axis range and ticks
+plt.ylim(0, 600)
+plt.yticks(range(0, 601, 100), fontsize=18)
 
-# Annotate values inside the top of bars
-font_size = 12
-for bar_group in bars:
-    for bar in bar_group:
-        height = bar.get_height()
-        # Place the text 2% below the bar top inside
-        y_pos = height * 0.98
-        plt.text(
-            bar.get_x() + bar.get_width() / 2, y_pos,
-            f"{height:.1f} ms", ha='center', va='top',
-            fontsize=font_size, color='white', weight='bold', zorder=2
-        )
+# Grid line
+plt.grid(axis="y", linestyle="--", linewidth=1.2, alpha=0.6)
+plt.gca().set_axisbelow(True)
 
-center_offset = (-1.5 + (len(scenarios)-1)/2) * width
-plt.xticks(x + center_offset, methods, fontsize=12)
-# plt.ylabel("The number of service provision", fontsize=12)
-plt.ylabel("Average delay (ms)", fontsize=12)
+# Value labels on top of bars
+for bar, value in zip(bars, values):
+    plt.text(
+        bar.get_x() + bar.get_width() / 2,
+        bar.get_height() + 10,
+        f"{value:g}",
+        ha="center",
+        va="bottom",
+        fontsize=20
+    )
 
+# Remove top and right spines
 ax = plt.gca()
-ax.set_axisbelow(True)
-ax.grid(True, axis='y', linestyle='--', alpha=0.5)
-ax.grid(True, axis='x', linestyle='--', alpha=0.3)
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
 
-plt.legend(loc='upper center', bbox_to_anchor=(0.5, 1.1), ncol=3, frameon=False, fontsize=12)
-# plt.legend(loc='upper center', bbox_to_anchor=(0.5,1.15),
-#            ncol=2, frameon=False, fontsize=12)
+# Make left and bottom axis lines thicker
+ax.spines["left"].set_linewidth(1.5)
+ax.spines["bottom"].set_linewidth(1.5)
+
+# No title, no x-axis title
+plt.xlabel("")
+
+# Layout
 plt.tight_layout()
+
+# Save figure
+plt.savefig("service_provision_bar_graph.png", dpi=300, bbox_inches="tight")
+
+# Show figure
 plt.show()
