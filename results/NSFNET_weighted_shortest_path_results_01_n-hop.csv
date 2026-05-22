@@ -1,2 +1,2 @@
 average_reward,average_session_blocking,average_total_generation_keys,average_remaining_keys,average_used_keys,average_expired_keys,average_delay,average_hops,average_proactive_keys,average_proactive_used_keys,average_proactive_gen_keys,average_proactive_expired_keys,average_proactive_used_keys_for_n_hop,average_n_hop_proactive_gen_keys,average_n_hop_proactive_used_keys,average_n_hop_proactive_expired_keys
-9208.8,-125.2,1022288.8,11555225.0,76789.0,76789.0,69.46379306562032,2.236494826640508,0.16429477703250886,14900.2,90691.6,23581.4,52117.2,24430.8,5587.2,18839.6
+1463.6,-0.4,108163.2,953959.4,34129.0,34129.0,35.93209523809523,1.291702380952381,0.06817974510402071,2405.6,35283.4,32695.6,0.0,0.0,0.0,0.0

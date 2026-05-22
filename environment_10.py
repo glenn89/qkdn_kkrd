@@ -30,11 +30,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def save_requests(self, filename="requests/BUTTERFLY_1000_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def load_requests(self, filename="requests/BUTTERFLY_1000_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -52,6 +52,7 @@ class QuantumEnvironment:
             'COST266': topology_conf.cost266_topo
         }
         self.topology_conf = self.topology_list[topology_type]
+        self.dist_probability = 0.10
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.10
         elif self.topology_conf['NAME'] == 'COST266':
@@ -119,7 +120,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.load_requests()
+        self.requests.save_requests()
 
 
     def generate_topology(self):
@@ -924,8 +925,8 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     max_time_step = 1_000  # 1_000
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
-    topology_type = 'NSFNET'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    topology_type = 'BUTTERFLY'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
     # num_simulation = 15
