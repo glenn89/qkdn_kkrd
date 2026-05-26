@@ -30,11 +30,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/BUTTERFLY_1000_requests_01.pkl"):
+    def save_requests(self, filename="requests/BUTTERFLY_5000_requests_03.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/BUTTERFLY_1000_requests_01.pkl"):
+    def load_requests(self, filename="requests/BUTTERFLY_5000_requests_03.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -52,7 +52,7 @@ class QuantumEnvironment:
             'COST266': topology_conf.cost266_topo
         }
         self.topology_conf = self.topology_list[topology_type]
-        self.dist_probability = 0.10
+        self.dist_probability = 0.30
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.10
         elif self.topology_conf['NAME'] == 'COST266':
@@ -260,26 +260,27 @@ class QuantumEnvironment:
                 min_lifetime = 0
 
             for _ in range(min_key_count):
-                if max_lifetime - min_lifetime < self.lifetime_threshold_1:
-                    # 2) proactive key 생성량 기록
-                    self.proactive_key_generation += self.consume_key_size
+                # Consider lifetime threshold
+                # if max_lifetime - min_lifetime < self.lifetime_threshold_1:
+                # 2) proactive key 생성량 기록
+                self.proactive_key_generation += self.consume_key_size
 
-                    # 3) 경로상 key 소비
-                    for i in range(len(path) - 1):
-                        sorted_key = tuple(sorted((path[i], path[i+1])))
-                        # expand_G에서 소비
-                        self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                        self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
-                        # logi_G에서 소비
-                        self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
-                        self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
-                        self.node_num_heat[edge[0]][edge[1]] += 1
-                        self.node_num_heat[edge[1]][edge[0]] += 1
+                # 3) 경로상 key 소비
+                for i in range(len(path) - 1):
+                    sorted_key = tuple(sorted((path[i], path[i+1])))
+                    # expand_G에서 소비
+                    self.expand_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                    self.expand_key_pool[sorted_key] = self.expand_key_pool[sorted_key][self.consume_key_size:]
+                    # logi_G에서 소비
+                    self.logi_G.edges[sorted_key]['num_key'] -= self.consume_key_size
+                    self.logi_key_pool[sorted_key] = self.logi_key_pool[sorted_key][self.consume_key_size:]
+                    self.node_num_heat[edge[0]][edge[1]] += 1
+                    self.node_num_heat[edge[1]][edge[0]] += 1
 
-                    # 4) 논리 그래프(edge)에 proactive key 추가
-                    if edge in self.logi_key_pool:
-                        self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
-                        self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
+                # 4) 논리 그래프(edge)에 proactive key 추가
+                if edge in self.logi_key_pool:
+                    self.logi_key_pool[edge].extend([min_lifetime] * self.consume_key_size)
+                    self.logi_G.edges[edge]['num_key'] = len(self.logi_key_pool[edge])
 
         # N-hop's proactive key generation process
         if self.proactive_type == 'n-hop':
@@ -330,7 +331,9 @@ class QuantumEnvironment:
                 existing_nhop = self.logi_G.edges[edge]['num_key'] if self.logi_G.has_edge(*edge) else 0
 
                 # if enough 1-hop keys and lifetime gap < threshold
-                if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold_4:
+                # if min_count > existing_nhop and (max_life - min_life) < self.lifetime_threshold_4:
+                i = len(path) - 1
+                if self.logi_G.edges[edge]['num_key'] < min_count / (i ** 2):
                     self.n_hop_proactive_key_generation += self.consume_key_size
                     for i in range(len(path) - 1):
                         sorted_key = tuple(sorted((path[i], path[i+1])))
@@ -444,7 +447,7 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 50
         self.num_request_scale = 1
-        self.key_life_time = 20
+        self.key_life_time = 1_000_000
         self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
@@ -923,16 +926,16 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    max_time_step = 1_000  # 1_000
-    proactive = True
+    max_time_step = 5_000  # 1_000
+    proactive = False
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     topology_type = 'BUTTERFLY'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    # num_simulation = 15
-    # seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
-    num_simulation = 5
-    seed = [0, 1, 2, 3, 4]  # 42
+    num_simulation = 15
+    seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
+    # num_simulation = 5
+    # seed = [0, 1, 2, 3, 4]  # 42
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)
@@ -1207,7 +1210,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_01_n-hop.csv'
+    csv_file_path_2 = 'results/BUTTERFLY_weighted_shortest_path_results_03.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
