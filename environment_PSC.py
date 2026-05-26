@@ -120,7 +120,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.save_requests()
+        self.requests.load_requests()
 
 
     def generate_topology(self):
@@ -927,7 +927,7 @@ class QuantumEnvironment:
 
 if __name__ == "__main__":
     max_time_step = 5_000  # 1_000
-    proactive = False
+    proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     topology_type = 'BUTTERFLY'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
@@ -1210,7 +1210,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/BUTTERFLY_weighted_shortest_path_results_01.csv'
+    csv_file_path_2 = 'results/BUTTERFLY_weighted_shortest_path_results_01_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
