@@ -120,7 +120,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.save_requests()
+        self.requests.load_requests()
 
 
     def generate_topology(self):

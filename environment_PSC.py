@@ -30,11 +30,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/BUTTERFLY_10_000_requests_01.pkl"):
+    def save_requests(self, filename="requests/BUTTERFLY_5000_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/BUTTERFLY_10_000_requests_01.pkl"):
+    def load_requests(self, filename="requests/BUTTERFLY_5000_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
