@@ -30,11 +30,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def save_requests(self, filename="requests/NSFNET_10000_requests_03.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_1000_requests_01.pkl"):
+    def load_requests(self, filename="requests/NSFNET_10000_requests_03.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -53,9 +53,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -92,6 +92,7 @@ class QuantumEnvironment:
         self.path_length = None
         self.all_possible_edges = None
         self.all_link_delay = None
+        self.request_fairness = None
 
         self.session_blocking = 0
         self.total_generation_keys = 0
@@ -430,7 +431,7 @@ class QuantumEnvironment:
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = 20   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -472,6 +473,7 @@ class QuantumEnvironment:
 
         self.generate_topology()
         self.node_num_heat = np.zeros((len(self.G), len(self.G)))
+        self.request_fairness = np.zeros((len(self.G), len(self.G)))
         self.all_link_delay = {edge: {} for edge in self.all_possible_edges}
         for edge in self.all_possible_edges:
             self.all_link_delay[edge] = {
@@ -567,6 +569,8 @@ class QuantumEnvironment:
             else:
                 success_request += 1
                 self.reward += 1
+                self.request_fairness[self.source_node][self.target_node] += 1
+                self.request_fairness[self.target_node][self.source_node] += 1
                 delay = 0
                 step_hops += len(routing_path) - 1
                 if len(routing_path) > 2:
@@ -627,6 +631,14 @@ class QuantumEnvironment:
 
         self.time_step += 1
 
+        # Jain's Fairness Index: 하삼각(i>j) 원소만 추출해 이중 카운트 방지
+        served_flat = self.request_fairness[np.tril_indices(len(self.G), k=-1)]
+        active = served_flat[served_flat > 0]  # 1회 이상 서비스된 pair만
+        if len(active) > 0:
+            fairness = (active.sum() ** 2) / (len(active) * (active ** 2).sum())
+        else:
+            fairness = 1.0  # 요청 없으면 완전 공평으로 처리
+
         info = {
             'session_blocking': self.session_blocking,
             'total_generation_keys': self.total_generation_keys,
@@ -638,7 +650,8 @@ class QuantumEnvironment:
             'hops': self.hops,
             'path_length': self.path_length,
             'heat_map': self.node_num_heat,
-            'all_link_delay': self.all_link_delay
+            'all_link_delay': self.all_link_delay,
+            'request_fairness': fairness,
         }
 
         # Check environment | reflect action | reduction resource
@@ -921,14 +934,15 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    max_time_step = 1_000  # 1_000
+    max_time_step = 10_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
     topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 30
-    seed = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95]  # 42
+    num_simulation = 15
+    seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
+    # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     threshold_list = range(0, 21, 1)
@@ -949,6 +963,7 @@ if __name__ == "__main__":
         "average_delay", "average_hops", "average_proactive_keys", "average_proactive_used_keys",
         "average_proactive_gen_keys", "average_proactive_expired_keys", "average_proactive_used_keys_for_n_hop",
         "average_n_hop_proactive_gen_keys", "average_n_hop_proactive_used_keys", "average_n_hop_proactive_expired_keys",
+        "average_fairness",
     ]
 
     shortest_path_info, weighted_shortest_path_info = [{k: [] for k in metrics} for _ in range(2)]
@@ -974,6 +989,7 @@ if __name__ == "__main__":
         weighted_shortest_average_n_hop_proactive_used_keys, shortest_average_n_hop_proactive_used_keys, qber_average_n_hop_proactive_used_keys = 0, 0, 0
         weighted_shortest_average_n_hop_proactive_gen_keys, shortest_average_n_hop_proactive_gen_keys, qber_average_n_hop_proactive_gen_keys = 0, 0, 0
         weighted_shortest_average_n_hop_proactive_expired_keys, shortest_average_n_hop_proactive_expired_keys, qber_average_n_hop_proactive_expired_keys = 0, 0, 0
+        weighted_shortest_average_fairness = 0
 
         # Shortest path simulation
         env.metric_type = 'simple_shortest'
@@ -1042,6 +1058,7 @@ if __name__ == "__main__":
             weighted_shortest_average_expired_keys += info['expired_keys']
             weighted_shortest_average_delay += info['delay']
             weighted_shortest_average_hops += info['hops']
+            weighted_shortest_average_fairness += info['request_fairness']
             if proactive:
                 weighted_shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
                 weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
@@ -1133,6 +1150,7 @@ if __name__ == "__main__":
         weighted_shortest_average_n_hop_proactive_gen_keys /= num_simulation
         weighted_shortest_average_n_hop_proactive_used_keys /= num_simulation
         weighted_shortest_average_n_hop_proactive_expired_keys /= num_simulation
+        weighted_shortest_average_fairness /= num_simulation
         #
         # qber_average_reward /= num_simulation
         # qber_average_session_blocking /= num_simulation
@@ -1165,6 +1183,7 @@ if __name__ == "__main__":
         print(f"{'Average n_hop proactive keys generation : ':<30}{(weighted_shortest_average_n_hop_proactive_gen_keys):<10}")
         print(f"{'Average n_hop proactive keys used : ':<30}{(weighted_shortest_average_n_hop_proactive_used_keys):<10}")
         print(f"{'Average n_hop proactive keys expired : ':<30}{(weighted_shortest_average_n_hop_proactive_expired_keys):<10}")
+        print(f"{'Average request fairness : ':<30}{(weighted_shortest_average_fairness):<10}")
         print()
         # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
         # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
@@ -1191,6 +1210,7 @@ if __name__ == "__main__":
         weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
         weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
         weighted_shortest_path_info['average_hops'].append(weighted_shortest_average_hops / max_time_step)
+        weighted_shortest_path_info['average_fairness'].append(weighted_shortest_average_fairness)
         if proactive:
             weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
             weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
@@ -1203,7 +1223,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_05_1-hop_1.csv'
+    csv_file_path_2 = 'results/10_000/NSFNET_weighted_shortest_path_results_03_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

@@ -30,11 +30,11 @@ class Request:
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
         return reqs_by_t
 
-    def save_requests(self, filename="requests/NSFNET_10000_requests_05.pkl"):
+    def save_requests(self, filename="requests/NSFNET_10000_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/NSFNET_10000_requests_05.pkl"):
+    def load_requests(self, filename="requests/NSFNET_10000_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -53,9 +53,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.50
+            self.dist_probability = 0.10
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.50
+            self.dist_probability = 0.10
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -1223,7 +1223,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/NSFNET_weighted_shortest_path_results_05_1-hop.csv'
+    csv_file_path_2 = 'results/10_000/NSFNET_weighted_shortest_path_results_01_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
