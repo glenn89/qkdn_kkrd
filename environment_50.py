@@ -58,11 +58,11 @@ class Request:
         # Step 4: 각 스텝에서 counts[t]개의 pair를 랜덤 선택
         reqs_by_t = []
         for t in range(T):
-            n = int(np.clip(counts[t], 0, total_pairs))
+            n = int(counts[t])
             if n == 0:
                 reqs_by_t.append(np.empty((0, 2), dtype=int))
             else:
-                chosen_idx = self.rng.choice(total_pairs, size=n, replace=False)
+                chosen_idx = self.rng.choice(total_pairs, size=n, replace=True)
                 reqs_by_t.append(np.column_stack([iu[chosen_idx], ju[chosen_idx]]))
 
         return reqs_by_t
