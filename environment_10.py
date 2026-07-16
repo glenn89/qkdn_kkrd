@@ -22,12 +22,50 @@ class Request:
         self.requests = self.make_requests_for_all_steps(T=max_time_step,
                                                          N=topology_conf['NUM_QKD_NODE'],
                                                          p=dist_probability)
+        # self.requests = self.make_burst_requests_for_all_steps(T=max_time_step,
+        #                                                  N=topology_conf['NUM_QKD_NODE'],
+        #                                                  p=dist_probability)
+
     def make_requests_for_all_steps(self, T, N, p):
         reqs_by_t = []
         iu, ju = np.triu_indices(N, k=1)  # 무방향 예시
         for _ in range(T):
             keep = self.rng.binomial(1, p, size=iu.shape[0]).astype(bool)
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
+        return reqs_by_t
+
+    def make_burst_requests_for_all_steps(self, T, N, p, zipf_a=2.0):
+        iu, ju = np.triu_indices(N, k=1)
+        total_pairs = len(iu)
+
+        # Step 1: Bernoulli로 전체 총 request 수 결정 (기존과 동일한 총량)
+        total_requests = sum(
+            self.rng.binomial(1, p, size=total_pairs).sum()
+            for _ in range(T)
+        )
+
+        # Step 2: Zipf 가중치로 스텝별 비율 결정
+        zipf_weights = self.rng.zipf(zipf_a, size=T).astype(float)
+        zipf_weights /= zipf_weights.sum()  # 비율 정규화
+
+        # Step 3: 총 request 수를 Zipf 비율에 따라 각 스텝에 배분
+        counts = np.floor(zipf_weights * total_requests).astype(int)
+
+        # 반올림 오차로 인한 차이를 마지막 스텝에서 보정
+        remainder = total_requests - counts.sum()
+        top_indices = np.argsort(zipf_weights)[::-1][:remainder]
+        counts[top_indices] += 1
+
+        # Step 4: 각 스텝에서 counts[t]개의 pair를 랜덤 선택
+        reqs_by_t = []
+        for t in range(T):
+            n = int(counts[t])
+            if n == 0:
+                reqs_by_t.append(np.empty((0, 2), dtype=int))
+            else:
+                chosen_idx = self.rng.choice(total_pairs, size=n, replace=True)
+                reqs_by_t.append(np.column_stack([iu[chosen_idx], ju[chosen_idx]]))
+
         return reqs_by_t
 
     def save_requests(self, filename="requests/NSFNET_10000_requests_01.pkl"):
@@ -431,7 +469,7 @@ class QuantumEnvironment:
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = 20   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -940,8 +978,8 @@ if __name__ == "__main__":
     topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 15
-    seed = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90]  # 42
+    num_simulation = 3
+    seed = [0, 5, 10]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
