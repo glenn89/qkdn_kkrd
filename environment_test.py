@@ -1207,7 +1207,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/NSFNET_weighted_shortest_path_results_05_1-hop.csv'
+    csv_file_path_2 = 'results/old_results/NSFNET_weighted_shortest_path_results_05_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
