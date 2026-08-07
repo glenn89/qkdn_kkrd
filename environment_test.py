@@ -65,11 +65,11 @@ def print_confidence_interval(label, ci, unit=""):
 
 
 class Request:
-    def __init__(self, max_time_step, topology_conf, dist_probability):
+    def __init__(self, max_time_step, topology_conf, dist_probability, seed):
         self.discard_time = 0
         self.ID = 0
 
-        self.rng = np.random.default_rng()
+        self.rng = np.random.default_rng(seed=seed)
         self.requests = self.make_requests_for_all_steps(T=max_time_step,
                                                          N=topology_conf['NUM_QKD_NODE'],
                                                          p=dist_probability)
@@ -142,9 +142,9 @@ class QuantumEnvironment:
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -214,7 +214,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.load_requests()
+        # self.requests.load_requests()
 
 
     def generate_topology(self):
@@ -544,6 +544,7 @@ class QuantumEnvironment:
         self.num_seed = seed
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
+        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability, self.num_seed)
 
         self.generate_key_time_slot = 1
         self.generate_key_size = 10
@@ -565,7 +566,7 @@ class QuantumEnvironment:
         self.num_request = 50
         self.num_request_scale = 1
         self.key_life_time = 100
-        self.key_pool_size = 1000
+        self.key_pool_size = 100
         self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -1063,19 +1064,19 @@ class QuantumEnvironment:
 
 
 if __name__ == "__main__":
-    max_time_step = 100  # 1_000
+    max_time_step = 1000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 3
-    seed = [0, 5, 10]  # 42
+    num_simulation = 5
+    seed = [0, 5, 10, 15, 20]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)   # lifetime = 20
-    threshold_list = [0, 100]
+    threshold_list = [80, 85, 90, 95, 100]
     # threshold_list = [0, 20, 40, 60, 80, 85, 90, 95, 100]    # lifetime = 100
 
     print("Simulation information")
@@ -1095,7 +1096,7 @@ if __name__ == "__main__":
         "average_proactive_gen_keys", "average_proactive_expired_keys", "average_proactive_used_keys_for_n_hop",
         "average_n_hop_proactive_gen_keys", "average_n_hop_proactive_used_keys", "average_n_hop_proactive_expired_keys",
         "average_fairness", "average_overflow_keys", "average_key_pool_usage",
-        "reward_mean", "reward_ci_min", "reward_ci_max", "reward_ci_half",
+        "provision_mean", "provision_ci_min", "provision_ci_max", "provision_ci_half",
         "delay_mean", "delay_ci_min", "delay_ci_max", "delay_ci_half"
     ]
 
@@ -1374,10 +1375,10 @@ if __name__ == "__main__":
         weighted_shortest_path_info['average_key_pool_usage'].append(weighted_shortest_average_key_pool_usage)
 
         # --- 95% 신뢰구간 결과 저장 ---
-        weighted_shortest_path_info['reward_mean'].append(ci_reward['mean'])
-        weighted_shortest_path_info['reward_ci_min'].append(ci_reward['lower'])
-        weighted_shortest_path_info['reward_ci_max'].append(ci_reward['upper'])
-        weighted_shortest_path_info['reward_ci_half'].append(ci_reward['half'])
+        weighted_shortest_path_info['provision_mean'].append(ci_reward['mean'])
+        weighted_shortest_path_info['provision_ci_min'].append(ci_reward['lower'])
+        weighted_shortest_path_info['provision_ci_max'].append(ci_reward['upper'])
+        weighted_shortest_path_info['provision_ci_half'].append(ci_reward['half'])
         weighted_shortest_path_info['delay_mean'].append(ci_delay['mean'])
         weighted_shortest_path_info['delay_ci_min'].append(ci_delay['lower'])
         weighted_shortest_path_info['delay_ci_max'].append(ci_delay['upper'])
@@ -1394,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_weighted_shortest_path_results_01_1-hop_lifetime100_keypool1000_test.csv'
+    csv_file_path_2 = 'results/10_000/NSFNET_weighted_shortest_path_results_03_1-hop_lifetime100_keypool100_test.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

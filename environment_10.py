@@ -13,6 +13,57 @@ import matplotlib.pyplot as plt
 import topology_conf
 
 
+# ===================== 95% 신뢰구간 유틸 =====================
+_T_TABLE_95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+                7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179,
+                13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101,
+                19: 2.093, 20: 2.086, 21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064,
+                25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048, 29: 2.045}
+
+
+def _t_critical(df, confidence=0.95):
+    """자유도 df에 대한 양측 t 임계값. scipy가 있으면 정확값, 없으면 표에서 조회."""
+    try:
+        from scipy import stats
+        return float(stats.t.ppf(0.5 + confidence / 2.0, df))
+    except ImportError:
+        if df in _T_TABLE_95:
+            return _T_TABLE_95[df]
+        if df > 29:
+            return 1.96
+        return _T_TABLE_95[max(k for k in _T_TABLE_95 if k <= df)]
+
+
+def confidence_interval(samples, confidence=0.95):
+    """시뮬레이션 표본 리스트 -> 평균/신뢰구간 하한(min)/상한(max)/반폭/표준편차."""
+    a = np.asarray(samples, dtype=float)
+    n = a.size
+    if n == 0:
+        return dict(n=0, mean=0.0, lower=0.0, upper=0.0, half=0.0,
+                    std=0.0, sem=0.0, obs_min=0.0, obs_max=0.0)
+    mean = float(a.mean())
+    if n == 1:
+        return dict(n=1, mean=mean, lower=mean, upper=mean, half=0.0,
+                    std=0.0, sem=0.0, obs_min=mean, obs_max=mean)
+    std = float(a.std(ddof=1))              # 표본표준편차 (ddof=1 필수)
+    sem = std / np.sqrt(n)                  # 표준오차
+    half = sem * _t_critical(n - 1, confidence)
+    return dict(n=n, mean=mean, lower=mean - half, upper=mean + half,
+                half=half, std=std, sem=sem,
+                obs_min=float(a.min()), obs_max=float(a.max()))
+
+
+def print_confidence_interval(label, ci, unit=""):
+    """신뢰구간 결과를 보기 좋게 출력."""
+    print(f"  {label:<16} n={ci['n']:<3} mean={ci['mean']:>12.4f}{unit}"
+          f"  std={ci['std']:>10.4f}")
+    print(f"  {'':<16} 95% CI  min={ci['lower']:>12.4f}{unit}"
+          f"  max={ci['upper']:>12.4f}{unit}  (+/-{ci['half']:.4f})")
+    print(f"  {'':<16} 실측범위 min={ci['obs_min']:>12.4f}{unit}"
+          f"  max={ci['obs_max']:>12.4f}{unit}")
+# ============================================================
+
+
 class Request:
     def __init__(self, max_time_step, topology_conf, dist_probability):
         self.discard_time = 0
@@ -68,11 +119,11 @@ class Request:
 
         return reqs_by_t
 
-    def save_requests(self, filename="requests/COST266_10000_requests_01_burst.pkl"):
+    def save_requests(self, filename="requests/COST266_10000_requests_01.pkl"):
         with open(filename, "wb") as f:
             pickle.dump(self.requests, f)
 
-    def load_requests(self, filename="requests/COST266_10000_requests_01_burst.pkl"):
+    def load_requests(self, filename="requests/COST266_10000_requests_01.pkl"):
         with open(filename, "rb") as f:
             self.requests = pickle.load(f)
 
@@ -163,7 +214,7 @@ class QuantumEnvironment:
         self.alpha = 0
 
         self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
-        self.requests.load_requests()
+        # self.requests.load_requests()
 
 
     def generate_topology(self):
@@ -493,6 +544,7 @@ class QuantumEnvironment:
         self.num_seed = seed
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
+        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
 
         self.generate_key_time_slot = 1
         self.generate_key_size = 10
@@ -702,6 +754,8 @@ class QuantumEnvironment:
 
         # self.source_node, self.target_node = np.random.choice(np.arange(0, self.topology_conf['NUM_QKD_NODE']), size=2, replace=False)
         # self.source_node, self.target_node = 0, self.topology_conf['NUM_QKD_NODE'] - 1
+
+        self.accumulate_key_pool_usage()
 
         self.time_step += 1
 
@@ -1013,16 +1067,16 @@ if __name__ == "__main__":
     max_time_step = 10_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
     num_simulation = 3
-    seed = [0, 5, 10]  # 42
+    seed = [0, 5, 10, 15, 20]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)   # lifetime = 20
-    # threshold_list = [100]
+    # threshold_list = [80, 85, 90, 95, 100]
     threshold_list = [0, 20, 40, 60, 80, 85, 90, 95, 100]    # lifetime = 100
 
     print("Simulation information")
@@ -1041,7 +1095,9 @@ if __name__ == "__main__":
         "average_delay", "average_hops", "average_proactive_keys", "average_proactive_used_keys",
         "average_proactive_gen_keys", "average_proactive_expired_keys", "average_proactive_used_keys_for_n_hop",
         "average_n_hop_proactive_gen_keys", "average_n_hop_proactive_used_keys", "average_n_hop_proactive_expired_keys",
-        "average_fairness", "average_overflow_keys", "average_key_pool_usage"
+        "average_fairness", "average_overflow_keys", "average_key_pool_usage",
+        "provision_mean", "provision_ci_min", "provision_ci_max", "provision_ci_half",
+        "delay_mean", "delay_ci_min", "delay_ci_max", "delay_ci_half"
     ]
 
     shortest_path_info, weighted_shortest_path_info = [{k: [] for k in metrics} for _ in range(2)]
@@ -1122,12 +1178,17 @@ if __name__ == "__main__":
         # env.plot_heatmap()
         # Weighted shortest path simulation
         env.metric_type = 'weighted_shortest'
+        # --- 95% 신뢰구간용: 시드별 관측값 보관 ---
+        wsp_reward_samples, wsp_delay_samples = [], []
         # env.plot_topology()
         for i in range(num_simulation):
             s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive,
                              proactive_type=proactive_type, threshold=threshold)
             for _ in range(max_time_step):
                 _, weighted_shortest_reward, _, _, info = env.step(action)
+            # --- 95% 신뢰구간용: 이 시드의 최종 관측값 저장 ---
+            wsp_reward_samples.append(weighted_shortest_reward)
+            wsp_delay_samples.append(info['delay'] / max_time_step)
             weighted_shortest_average_reward += weighted_shortest_reward
             weighted_shortest_average_session_blocking += info['session_blocking']
             weighted_shortest_average_total_generation_keys += info['total_generation_keys']
@@ -1214,6 +1275,21 @@ if __name__ == "__main__":
         # shortest_average_proactive_gen_keys /= num_simulation
         # shortest_average_proactive_expired_keys /= num_simulation
 
+        # ================= 95% 신뢰구간 =================
+        ci_reward = confidence_interval(wsp_reward_samples, confidence=0.95)
+        ci_delay = confidence_interval(wsp_delay_samples, confidence=0.95)
+
+        print(f"--- [threshold={threshold}] weighted_shortest 95% 신뢰구간 ---")
+        print_confidence_interval("average_reward", ci_reward)
+        print_confidence_interval("average_delay", ci_delay, unit="ms")
+        print(f"  시드별 reward: {[round(v, 4) for v in wsp_reward_samples]}")
+        print(f"  시드별 delay : {[round(v, 4) for v in wsp_delay_samples]}")
+        if ci_reward["n"] < 10:
+            print(f"  [주의] n={ci_reward['n']}: 자유도가 작아 구간 폭 추정이 불안정합니다."
+                  f" num_simulation >= 10 권장")
+        print()
+        # ===============================================
+
         weighted_shortest_average_reward /= num_simulation
         weighted_shortest_average_session_blocking /= num_simulation
         weighted_shortest_average_total_generation_keys /= num_simulation
@@ -1290,13 +1366,23 @@ if __name__ == "__main__":
         weighted_shortest_path_info['average_session_blocking'].append(weighted_shortest_average_session_blocking)
         weighted_shortest_path_info['average_total_generation_keys'].append(weighted_shortest_average_total_generation_keys)
         weighted_shortest_path_info['average_remaining_keys'].append(weighted_shortest_average_remaining_keys)
-        weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_expired_keys)
+        weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_used_keys)
         weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
         weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
         weighted_shortest_path_info['average_hops'].append(weighted_shortest_average_hops / max_time_step)
         weighted_shortest_path_info['average_fairness'].append(weighted_shortest_average_fairness)
         weighted_shortest_path_info['average_overflow_keys'].append(weighted_shortest_average_key_overflow)
         weighted_shortest_path_info['average_key_pool_usage'].append(weighted_shortest_average_key_pool_usage)
+
+        # --- 95% 신뢰구간 결과 저장 ---
+        weighted_shortest_path_info['provision_mean'].append(ci_reward['mean'])
+        weighted_shortest_path_info['provision_ci_min'].append(ci_reward['lower'])
+        weighted_shortest_path_info['provision_ci_max'].append(ci_reward['upper'])
+        weighted_shortest_path_info['provision_ci_half'].append(ci_reward['half'])
+        weighted_shortest_path_info['delay_mean'].append(ci_delay['mean'])
+        weighted_shortest_path_info['delay_ci_min'].append(ci_delay['lower'])
+        weighted_shortest_path_info['delay_ci_max'].append(ci_delay['upper'])
+        weighted_shortest_path_info['delay_ci_half'].append(ci_delay['half'])
         if proactive:
             weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
             weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
@@ -1309,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_weighted_shortest_path_results_01_1-hop_lifetime100_burst.csv'
+    csv_file_path_2 = 'results/10_000/NSFNET_results_01_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

@@ -553,7 +553,7 @@ class QuantumEnvironment:
         # threshold(1~13)를 key_life_time(10) 범위로 선형 변환
         # scaled = (threshold / max_test_threshold) * self.key_life_time
         # # 최소 1, 최대 key_life_time-1 사이로 클램핑
-        self.lifetime_threshold_1 = threshold   # int(min(max(scaled, 1), self.key_life_time))
+        self.lifetime_threshold_1 = 100   # int(min(max(scaled, 1), self.key_life_time))
         self.lifetime_threshold_4 = threshold   # threshold
 
         self.proactive = proactive   # proactive
@@ -1066,7 +1066,7 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     max_time_step = 10_000  # 1_000
     proactive = True
-    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    proactive_type = 'n-hop' # '1-hop', 'n-hop'
     topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
@@ -1395,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/NSFNET_results_01_1-hop.csv'
+    csv_file_path_2 = 'results/10_000/NSFNET_results_01_n-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
