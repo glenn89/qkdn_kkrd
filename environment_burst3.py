@@ -79,104 +79,45 @@ class Request:
 
     def make_requests_for_all_steps(self, T, N, p):
         reqs_by_t = []
-        counts = np.empty(T, dtype=int)
         iu, ju = np.triu_indices(N, k=1)  # 무방향 예시
-        for t in range(T):
+        for _ in range(T):
             keep = self.rng.binomial(1, p, size=iu.shape[0]).astype(bool)
-            counts[t] = keep.sum()
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
-        np.savetxt("COST266_01_Bernoulli_distribution.csv", counts, delimiter=",", fmt="%.2f")
         return reqs_by_t
 
-    def make_burst_requests_for_all_steps(self, T, N, p,
-                                          zipf_a=1.1653600944, Nmax=378,
-                                          allow_zero=True, verbose=False):
+    def make_burst_requests_for_all_steps(self, T, N, p, zipf_a=2.0):
         iu, ju = np.triu_indices(N, k=1)
         total_pairs = len(iu)
 
-        # Step 1: 원본 그대로 — 동일 seed면 baseline과 총량이 비트 단위로 일치
-        total_requests = int(sum(
+        # Step 1: Bernoulli로 전체 총 request 수 결정 (기존과 동일한 총량)
+        total_requests = sum(
             self.rng.binomial(1, p, size=total_pairs).sum()
             for _ in range(T)
-        ))
+        )
 
-        # 스텝당 실질 상한 (물리적 상한도 함께 반영)
-        cap = min(Nmax, total_pairs)
-        if total_requests > cap * T:
-            raise ValueError(
-                f"실현 불가: total_requests={total_requests} > cap*T={cap * T}. "
-                f"Nmax를 올리거나 p를 낮추세요."
-            )
+        # Step 2: Zipf 가중치로 스텝별 비율 결정
+        zipf_weights = self.rng.zipf(zipf_a, size=T).astype(float)
+        zipf_weights /= zipf_weights.sum()  # 비율 정규화
 
-        # Step 2: 절단 Zipf에서 스텝별 개수 직접 샘플링
-        k, pmf = self._truncated_zipf_pmf(Nmax, zipf_a, allow_zero)
-        counts = self.rng.choice(k, size=T, p=pmf).astype(np.int64)
+        # Step 3: 총 request 수를 Zipf 비율에 따라 각 스텝에 배분
+        counts = np.floor(zipf_weights * total_requests).astype(int)
 
-        if verbose:
-            print(f"[샘플 원본] mean={counts.mean():.3f}, sum={counts.sum()}, "
-                  f"목표 total={total_requests}, 스케일={total_requests / max(counts.sum(), 1):.4f}")
+        # 반올림 오차로 인한 차이를 마지막 스텝에서 보정
+        remainder = total_requests - counts.sum()
+        top_indices = np.argsort(zipf_weights)[::-1][:remainder]
+        counts[top_indices] += 1
 
-        # Step 3: 총량을 total_requests에 정확히 맞추기 (상한 30 준수)
-        counts = self._rescale_counts(counts, total_requests, cap)
-        assert counts.sum() == total_requests and counts.max() <= cap
-
-        np.savetxt("COST266_01_zipf_distribution.csv", counts, delimiter=",", fmt="%.2f")
-
-        # Step 4: 스텝별 pair 선택 (중복 없이)
+        # Step 4: 각 스텝에서 counts[t]개의 pair를 랜덤 선택
         reqs_by_t = []
-        for n in counts:
-            n = int(n)
+        for t in range(T):
+            n = int(counts[t])
             if n == 0:
                 reqs_by_t.append(np.empty((0, 2), dtype=int))
             else:
-                idx = self.rng.choice(total_pairs, size=n, replace=False)
-                reqs_by_t.append(np.column_stack([iu[idx], ju[idx]]))
-
-        if verbose:
-            print(f"[보정 후]  total={counts.sum()}, max={counts.max()}, "
-                  f"mean={counts.mean():.3f}, std={counts.std():.2f}, "
-                  f"P(0)={(counts == 0).mean():.3f}")
+                chosen_idx = self.rng.choice(total_pairs, size=n, replace=True)
+                reqs_by_t.append(np.column_stack([iu[chosen_idx], ju[chosen_idx]]))
 
         return reqs_by_t
-
-    def _truncated_zipf_pmf(self, Nmax=30, a=0.6191, allow_zero=True):
-        """0~Nmax (shifted) 또는 1~Nmax 위의 절단 Zipf pmf. a<1도 허용."""
-        lo = 0 if allow_zero else 1
-        k = np.arange(lo, Nmax + 1)
-        base = (k + 1.0) if allow_zero else k.astype(float)
-        w = base ** (-a)
-        return k, w / w.sum()
-
-    def _rescale_counts(self, counts, total, cap):
-        """counts의 모양은 최대한 보존하면서 sum == total, 0 <= counts <= cap 강제."""
-        s = int(counts.sum())
-
-        # (a) 비례 스케일링 + 최대잔차법 → Zipf 모양 유지
-        if s > 0:
-            exact = counts * (total / s)
-            counts = np.floor(exact).astype(np.int64)
-            r = int(total - counts.sum())
-            if r > 0:
-                counts[np.argsort(-(exact - counts))[:r]] += 1
-        else:
-            counts = np.zeros_like(counts)
-
-        counts = np.minimum(counts, cap)
-
-        # (b) 클리핑/정수화 오차를 여유 있는 스텝에 water-filling
-        diff = int(total - counts.sum())
-        while diff != 0:
-            if diff > 0:
-                idx = np.flatnonzero(counts < cap)
-                take = min(diff, idx.size)
-                counts[self.rng.choice(idx, size=take, replace=False)] += 1
-                diff -= take
-            else:
-                idx = np.flatnonzero(counts > 0)
-                take = min(-diff, idx.size)
-                counts[self.rng.choice(idx, size=take, replace=False)] -= 1
-                diff += take
-        return counts
 
     def save_requests(self, filename="requests/COST266_10000_requests_01.pkl"):
         with open(filename, "wb") as f:
@@ -203,7 +144,7 @@ class QuantumEnvironment:
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.10
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -624,8 +565,8 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 50
         self.num_request_scale = 1
-        self.key_life_time = 20
-        self.key_pool_size = 100_000
+        self.key_life_time = 100
+        self.key_pool_size = 1000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -1454,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_results_01_1-hop_lifetime20.csv'
+    csv_file_path_2 = 'results/10_000/COST266_results_03_1-hop_keypool1000.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

@@ -65,11 +65,11 @@ def print_confidence_interval(label, ci, unit=""):
 
 
 class Request:
-    def __init__(self, max_time_step, topology_conf, dist_probability):
+    def __init__(self, max_time_step, topology_conf, dist_probability, seed):
         self.discard_time = 0
         self.ID = 0
 
-        self.rng = np.random.default_rng()
+        self.rng = np.random.default_rng(seed=seed)
         self.requests = self.make_requests_for_all_steps(T=max_time_step,
                                                          N=topology_conf['NUM_QKD_NODE'],
                                                          p=dist_probability)
@@ -144,7 +144,7 @@ class QuantumEnvironment:
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.50
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -213,7 +213,7 @@ class QuantumEnvironment:
         self.cumulative_edge_keys = None
         self.alpha = 0
 
-        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
+        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability, self.num_seed)
         # self.requests.load_requests()
 
 
@@ -402,7 +402,7 @@ class QuantumEnvironment:
                 )
                 distance = len(path) - 1
                 priority[(u, v)] = (1 / (remain_keys + 1)) + (1 / distance)
-                # priority[(u, v)] = (remain_keys + 1)
+                # priority[(u, v)] = 1 / (remain_keys + 1)
                 # priority[(u, v)] = 1.0 / distance
             sorted_pairs = sorted(priority, key=priority.get, reverse=True)
             # print(priority)
@@ -544,7 +544,7 @@ class QuantumEnvironment:
         self.num_seed = seed
         np.random.seed(self.num_seed)
         self.max_time_step = max_time_step
-        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability)
+        self.requests = Request(self.max_time_step, self.topology_conf, self.dist_probability, self.num_seed)
 
         self.generate_key_time_slot = 1
         self.generate_key_size = 10
@@ -566,7 +566,7 @@ class QuantumEnvironment:
         self.num_request = 50
         self.num_request_scale = 1
         self.key_life_time = 100
-        self.key_pool_size = 100_000
+        self.key_pool_size = 100
         self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -1067,17 +1067,17 @@ if __name__ == "__main__":
     max_time_step = 10_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    topology_type = 'NSFNET'
+    topology_type = 'COST266'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 5
-    seed = [0, 5, 10, 15, 20]  # 42
+    num_simulation = 3
+    seed = [0, 5, 10]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)   # lifetime = 20
-    # threshold_list = [80, 85, 90, 95, 100]
-    threshold_list = [0, 20, 40, 60, 80, 85, 90, 95, 100]    # lifetime = 100
+    threshold_list = [0, 100]
+    # threshold_list = [0, 20, 40, 60, 80, 85, 90, 95, 100]    # lifetime = 100
 
     print("Simulation information")
     print("The number of max time step: ", max_time_step)
@@ -1395,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/NSFNET_results_05_1-hop.csv'
+    csv_file_path_2 = 'results/10_000/COST266_results_03_1-hop_keypool100.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

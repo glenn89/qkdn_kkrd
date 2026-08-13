@@ -70,12 +70,12 @@ class Request:
         self.ID = 0
 
         self.rng = np.random.default_rng(seed=seed)
-        self.requests = self.make_requests_for_all_steps(T=max_time_step,
-                                                         N=topology_conf['NUM_QKD_NODE'],
-                                                         p=dist_probability)
-        # self.requests = self.make_burst_requests_for_all_steps(T=max_time_step,
+        # self.requests = self.make_requests_for_all_steps(T=max_time_step,
         #                                                  N=topology_conf['NUM_QKD_NODE'],
         #                                                  p=dist_probability)
+        self.requests = self.make_burst_requests_for_all_steps(T=max_time_step,
+                                                         N=topology_conf['NUM_QKD_NODE'],
+                                                         p=dist_probability)
 
     def make_requests_for_all_steps(self, T, N, p):
         reqs_by_t = []
@@ -85,7 +85,7 @@ class Request:
             keep = self.rng.binomial(1, p, size=iu.shape[0]).astype(bool)
             counts[t] = keep.sum()
             reqs_by_t.append(np.column_stack([iu[keep], ju[keep]]))
-        np.savetxt("COST266_01_Bernoulli_distribution.csv", counts, delimiter=",", fmt="%.2f")
+        # np.savetxt("COST266_01_Bernoulli_distribution.csv", counts, delimiter=",", fmt="%.2f")
         return reqs_by_t
 
     def make_burst_requests_for_all_steps(self, T, N, p,
@@ -120,7 +120,7 @@ class Request:
         counts = self._rescale_counts(counts, total_requests, cap)
         assert counts.sum() == total_requests and counts.max() <= cap
 
-        np.savetxt("COST266_01_zipf_distribution.csv", counts, delimiter=",", fmt="%.2f")
+        # np.savetxt("COST266_01_zipf_distribution.csv", counts, delimiter=",", fmt="%.2f")
 
         # Step 4: 스텝별 pair 선택 (중복 없이)
         reqs_by_t = []
@@ -139,7 +139,7 @@ class Request:
 
         return reqs_by_t
 
-    def _truncated_zipf_pmf(self, Nmax=30, a=0.6191, allow_zero=True):
+    def _truncated_zipf_pmf(self, Nmax=378, a=1.1653600944, allow_zero=True):
         """0~Nmax (shifted) 또는 1~Nmax 위의 절단 Zipf pmf. a<1도 허용."""
         lo = 0 if allow_zero else 1
         k = np.arange(lo, Nmax + 1)
@@ -624,7 +624,7 @@ class QuantumEnvironment:
         self.consume_std_dev = 2
         self.num_request = 50
         self.num_request_scale = 1
-        self.key_life_time = 20
+        self.key_life_time = 100
         self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
@@ -1454,7 +1454,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_results_01_1-hop_lifetime20.csv'
+    csv_file_path_2 = 'results/10_000/COST266_results_01_1-hop_burst.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
