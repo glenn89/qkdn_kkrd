@@ -1,6 +1,7 @@
 import copy
 import csv
 import math
+import os
 import pickle
 from collections import defaultdict
 from itertools import combinations
@@ -61,6 +62,56 @@ def print_confidence_interval(label, ci, unit=""):
           f"  max={ci['upper']:>12.4f}{unit}  (+/-{ci['half']:.4f})")
     print(f"  {'':<16} 실측범위 min={ci['obs_min']:>12.4f}{unit}"
           f"  max={ci['obs_max']:>12.4f}{unit}")
+# ============================================================
+
+
+# ============ (src, dst) pair 별 통계 matrix 저장 유틸 ============
+def save_matrix_csv(matrix, filename, fmt="%.6g"):
+    """NxN matrix를 행/열 인덱스(node id)와 함께 CSV로 저장."""
+    os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
+    n = matrix.shape[0]
+    df = pd.DataFrame(matrix,
+                      index=[f"{i}" for i in range(n)],
+                      columns=[f"{j}" for j in range(n)])
+    df.index.name = "src\\dst"
+    df.to_csv(filename, float_format=fmt)
+    return filename
+
+
+def save_pair_matrices_csv(mats, filename):
+    """
+    generated / provisioned / avg_hop matrix를 (src, dst) long-format CSV 한 장으로 저장.
+    상삼각(i < j)만 기록 -> 무방향 request이므로 중복 방지.
+    """
+    os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
+    generated = mats['generated']
+    provisioned = mats['provisioned']
+    hop_sum = mats['hop_sum']
+    avg_hop = mats['avg_hop']
+    distance_sum = mats.get('distance_sum')     # 실제 물리 거리 총합 (없으면 0 처리)
+    avg_distance = mats.get('avg_distance')     # 실제 물리 거리 평균 (없으면 0 처리)
+    n = generated.shape[0]
+
+    rows = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            g = float(generated[i][j])
+            p = float(provisioned[i][j])
+            rows.append({
+                'src': i,
+                'dst': j,
+                'generated': g,
+                'provisioned': p,
+                'blocked': g - p,
+                'provision_ratio': (p / g) if g > 0 else 0.0,
+                'total_hops': float(hop_sum[i][j]),
+                'average_hops': float(avg_hop[i][j]),
+                'total_distance': float(distance_sum[i][j]) if distance_sum is not None else 0.0,
+                'average_distance': float(avg_distance[i][j]) if avg_distance is not None else 0.0,
+            })
+    df = pd.DataFrame(rows)
+    df.to_csv(filename, index=False)
+    return filename
 # ============================================================
 
 
@@ -144,7 +195,7 @@ class QuantumEnvironment:
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.30
+            self.dist_probability = 0.10
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -182,6 +233,13 @@ class QuantumEnvironment:
         self.all_possible_edges = None
         self.all_link_delay = None
         self.request_fairness = None
+
+        # (src, dst) pair 별 통계 matrix
+        self.pair_generated_matrix = None    # 생성된 request 개수
+        self.pair_provisioned_matrix = None  # 실제 provision(할당) 된 request 개수
+        self.pair_hop_sum_matrix = None      # provision 된 request 들의 hop 수 총합
+        self.pair_distance_matrix = None     # provision 된 request 들의 실제 물리 거리(km) 총합
+        self.edge_distance = None            # logi_G 의 모든 edge -> 실제 물리 거리(km) 조회 테이블
 
         self.session_blocking = 0
         self.total_generation_keys = 0
@@ -276,9 +334,12 @@ class QuantumEnvironment:
 
                 # 새로 생성된 경로로 edge 연결
                 num_key = attr["num_key"]
+                # 원래 링크 거리를 span 개수로 균등 분할 -> 각 구간(span)의 실제 거리
+                span_distance = attr['distance'] / num_spans if num_spans > 0 else attr['distance']
                 for i in range(len(path_nodes) - 1):
                     n1, n2 = path_nodes[i], path_nodes[i + 1]
-                    self.expand_G.add_edge(n1, n2, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+                    self.expand_G.add_edge(n1, n2, weight=num_key, num_key=num_key,
+                                           distance=span_distance, owner_edge=tuple((u, v)))
             else:
                 # 기존 엣지 중간에 두 개의 노드를 추가
                 new_node1 = next_node_id
@@ -291,9 +352,14 @@ class QuantumEnvironment:
 
                 # 엣지 추가
                 num_key = attr["num_key"]
-                self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
-                self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
-                self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key, owner_edge=tuple((u, v)))
+                # 중간 노드 2개 -> 3개 구간으로 분할되므로 거리도 3등분
+                span_distance = attr['distance'] / 3
+                self.expand_G.add_edge(u, new_node1, weight=num_key, num_key=num_key,
+                                       distance=span_distance, owner_edge=tuple((u, v)))
+                self.expand_G.add_edge(new_node1, new_node2, weight=num_key, num_key=num_key,
+                                       distance=span_distance, owner_edge=tuple((u, v)))
+                self.expand_G.add_edge(new_node2, v, weight=num_key, num_key=num_key,
+                                       distance=span_distance, owner_edge=tuple((u, v)))
 
                 # 기존 엣지 제거
                 self.expand_G.remove_edge(u, v)
@@ -313,7 +379,51 @@ class QuantumEnvironment:
             if (u, v) not in self.logi_key_pool and (v, u) not in self.logi_key_pool:
                 self.logi_key_pool[(u, v)] = []
 
+        self.build_edge_distance()  # logi_G 의 모든 edge 에 실제 물리 거리 부여
         self.key_generation()  # Reflect the number of keys with qber
+
+    def build_edge_distance(self):
+        """
+        logi_G 에 존재하는 모든 edge 에 대해 '실제 물리 거리(km)' 조회 테이블을 만든다.
+        logi_G 의 edge 는 아래 3종류가 섞여 있으므로 종류별로 거리를 다르게 계산한다.
+          (1) 물리 링크        : self.G 의 edge          -> topology_conf 의 실제 거리
+          (2) span 링크        : expand_G 의 분할된 edge -> 원래 거리 / span 개수
+          (3) 논리 n-hop 링크  : self.G 에 없는 edge     -> self.G 상의 최단 물리 거리로 환산
+        """
+        self.edge_distance = {}
+
+        # (1) 물리 링크 (u, v) in self.G
+        for u, v, attr in self.G.edges(data=True):
+            self.edge_distance[tuple(sorted((u, v)))] = float(attr['distance'])
+
+        # (2) 중간 노드로 분할된 span 링크
+        for u, v, attr in self.expand_G.edges(data=True):
+            sorted_key = tuple(sorted((u, v)))
+            if sorted_key not in self.edge_distance:
+                self.edge_distance[sorted_key] = float(attr.get('distance', 0.0))
+
+        # (3) 논리 n-hop 링크: 물리 토폴로지 상 최단 거리로 환산
+        for u, v in self.all_possible_edges:
+            sorted_key = tuple(sorted((u, v)))
+            if sorted_key in self.edge_distance:
+                continue
+            try:
+                self.edge_distance[sorted_key] = float(
+                    nx.shortest_path_length(self.G, u, v, weight='distance'))
+            except nx.NetworkXNoPath:
+                self.edge_distance[sorted_key] = 0.0
+
+        # logi_G edge 속성에도 반영 (디버깅/시각화용)
+        for u, v in self.logi_G.edges:
+            self.logi_G[u][v]['distance'] = self.edge_distance.get(tuple(sorted((u, v))), 0.0)
+
+    def calculate_path_distance(self, routing_path):
+        """routing_path 를 따라 각 hop 의 실제 물리 거리를 합산해서 반환."""
+        total_distance = 0.0
+        for i in range(len(routing_path) - 1):
+            sorted_key = tuple(sorted((routing_path[i], routing_path[i + 1])))
+            total_distance += self.edge_distance.get(sorted_key, 0.0)
+        return total_distance
 
     # source, target node 추가하여 key pool 업데이트 및 logical graph 만들기
     # next state로 활용 하면 좋을 것 같음
@@ -502,6 +612,55 @@ class QuantumEnvironment:
             return 0.0
         return (self.key_pool_usage_ratio_sum / self.key_pool_usage_count) * 100
 
+    def get_pair_request_matrices(self):
+        """
+        (src, dst) pair 별 통계 matrix 반환.
+          generated       : 생성된 request 개수
+          provisioned     : 실제 provision(할당) 된 request 개수
+          blocked         : 차단된 request 개수 (generated - provisioned)
+          provision_ratio : provisioned / generated
+          hop_sum         : provision 된 request 들의 hop 수 총합
+          avg_hop         : 실제 할당된 request 의 평균 hop 수 (hop_sum / provisioned)
+          distance_sum    : 실제 할당된 request 들의 물리 거리(km) 총합
+          avg_distance    : 실제 할당된 request 의 평균 물리 거리(km) (distance_sum / provisioned)
+        """
+        generated = self.pair_generated_matrix.astype(np.float64)
+        provisioned = self.pair_provisioned_matrix.astype(np.float64)
+        hop_sum = self.pair_hop_sum_matrix.astype(np.float64)
+        distance_sum = self.pair_distance_matrix.astype(np.float64)
+
+        # 0으로 나누는 경우는 0 처리
+        avg_hop = np.divide(hop_sum, provisioned,
+                            out=np.zeros_like(hop_sum), where=provisioned > 0)
+        avg_distance = np.divide(distance_sum, provisioned,
+                                 out=np.zeros_like(distance_sum), where=provisioned > 0)
+        provision_ratio = np.divide(provisioned, generated,
+                                    out=np.zeros_like(generated), where=generated > 0)
+
+        return {
+            'generated': generated,
+            'provisioned': provisioned,
+            'blocked': generated - provisioned,
+            'provision_ratio': provision_ratio,
+            'hop_sum': hop_sum,
+            'avg_hop': avg_hop,
+            'distance_sum': distance_sum,
+            'avg_distance': avg_distance,
+        }
+
+    def save_pair_request_matrices(self, prefix):
+        """
+        (src, dst) matrix 들을 CSV 로 저장.
+        prefix 예: 'results/matrix/COST266_1-hop_th100'
+        """
+        mats = self.get_pair_request_matrices()
+        save_matrix_csv(mats['generated'], f"{prefix}_generated_matrix.csv")
+        save_matrix_csv(mats['provisioned'], f"{prefix}_provisioned_matrix.csv")
+        save_matrix_csv(mats['avg_hop'], f"{prefix}_average_hop_matrix.csv")
+        save_matrix_csv(mats['avg_distance'], f"{prefix}_average_distance_matrix.csv")
+        save_pair_matrices_csv(mats, f"{prefix}_pair_summary.csv")
+        return mats
+
     def plot_topology(self):
         edge_labels = {}
         pos = nx.spring_layout(self.G)
@@ -566,7 +725,7 @@ class QuantumEnvironment:
         self.num_request = 50
         self.num_request_scale = 1
         self.key_life_time = 100
-        self.key_pool_size = 200
+        self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -600,6 +759,15 @@ class QuantumEnvironment:
         self.generate_topology()
         self.node_num_heat = np.zeros((len(self.G), len(self.G)))
         self.request_fairness = np.zeros((len(self.G), len(self.G)))
+
+        # (src, dst) pair 별 통계 matrix 초기화
+        num_node = len(self.G)
+        self.pair_generated_matrix = np.zeros((num_node, num_node), dtype=np.int64)
+        self.pair_provisioned_matrix = np.zeros((num_node, num_node), dtype=np.int64)
+        self.pair_hop_sum_matrix = np.zeros((num_node, num_node), dtype=np.int64)
+        # 거리는 span 분할로 소수점이 생길 수 있으므로 float 로 관리
+        self.pair_distance_matrix = np.zeros((num_node, num_node), dtype=np.float64)
+
         self.all_link_delay = {edge: {} for edge in self.all_possible_edges}
         for edge in self.all_possible_edges:
             self.all_link_delay[edge] = {
@@ -690,6 +858,10 @@ class QuantumEnvironment:
             self.path_length[length] = self.path_length.get(length, 0) + 1
             self.all_link_delay[(self.source_node, self.target_node)]['generated'] += 1
 
+            # [pair matrix] 생성된 request 개수 기록 (대칭 저장)
+            self.pair_generated_matrix[self.source_node][self.target_node] += 1
+            self.pair_generated_matrix[self.target_node][self.source_node] += 1
+
             if not routing_path:
                 self.session_blocking -= 1
             else:
@@ -699,19 +871,29 @@ class QuantumEnvironment:
                 self.request_fairness[self.target_node][self.source_node] += 1
                 delay = 0
                 step_hops += len(routing_path) - 1
+
+                # [pair matrix] 실제 provision 된 request 개수 / hop 수 / 물리 거리 기록 (대칭 저장)
+                hop_count = len(routing_path) - 1
+                path_distance = self.calculate_path_distance(routing_path)
+                self.pair_provisioned_matrix[self.source_node][self.target_node] += 1
+                self.pair_provisioned_matrix[self.target_node][self.source_node] += 1
+                self.pair_hop_sum_matrix[self.source_node][self.target_node] += hop_count
+                self.pair_hop_sum_matrix[self.target_node][self.source_node] += hop_count
+                self.pair_distance_matrix[self.source_node][self.target_node] += path_distance
+                self.pair_distance_matrix[self.target_node][self.source_node] += path_distance
                 if len(routing_path) > 2:
                     for node in routing_path[1:-1]:
                         # self.node_num_heat[routing_path[i]][routing_path[i+1]] += 1
                         # self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
                         self.used_keys += self.consume_key_size
                         if node in self.G.nodes:
-                            delay += 40
-                        elif node in self.expand_G.nodes and node not in self.G.nodes:
                             delay += 20
-                    delay += 20
+                        elif node in self.expand_G.nodes and node not in self.G.nodes:
+                            delay += 10
+                    delay += 10
                     step_delay += delay
                 else:
-                    delay += 20
+                    delay += 10
                     step_delay += delay
                 # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", step_delay)
                 self.all_link_delay[(self.source_node, self.target_node)]['success'] += 1
@@ -782,6 +964,10 @@ class QuantumEnvironment:
             'request_fairness': fairness,
             'average_key_pool_usage_percent': self.get_average_key_pool_usage_percent(),
             'key_pool_overflow_count': self.key_pool_overflow_count,
+            'pair_generated_matrix': self.pair_generated_matrix,
+            'pair_provisioned_matrix': self.pair_provisioned_matrix,
+            'pair_hop_sum_matrix': self.pair_hop_sum_matrix,
+            'pair_distance_matrix': self.pair_distance_matrix,
         }
 
         # Check environment | reflect action | reduction resource
@@ -1070,8 +1256,8 @@ if __name__ == "__main__":
     topology_type = 'COST266'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 3
-    seed = [0, 5, 10]  # 42
+    num_simulation = 1
+    seed = [0]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
@@ -1180,6 +1366,13 @@ if __name__ == "__main__":
         env.metric_type = 'weighted_shortest'
         # --- 95% 신뢰구간용: 시드별 관측값 보관 ---
         wsp_reward_samples, wsp_delay_samples = [], []
+
+        # --- (src, dst) pair matrix 누적용 (시드 전체 합산) ---
+        num_node = env.topology_conf['NUM_QKD_NODE']
+        total_pair_generated = np.zeros((num_node, num_node), dtype=np.float64)
+        total_pair_provisioned = np.zeros((num_node, num_node), dtype=np.float64)
+        total_pair_hop_sum = np.zeros((num_node, num_node), dtype=np.float64)
+        total_pair_distance = np.zeros((num_node, num_node), dtype=np.float64)
         # env.plot_topology()
         for i in range(num_simulation):
             s, _ = env.reset(seed=seed[i], max_time_step=max_time_step, proactive=proactive,
@@ -1200,6 +1393,13 @@ if __name__ == "__main__":
             weighted_shortest_average_fairness += info['request_fairness']
             weighted_shortest_average_key_pool_usage += info['average_key_pool_usage_percent']
             weighted_shortest_average_key_overflow += info['key_pool_overflow_count']
+
+            # --- (src, dst) pair matrix 누적 ---
+            total_pair_generated += info['pair_generated_matrix']
+            total_pair_provisioned += info['pair_provisioned_matrix']
+            total_pair_hop_sum += info['pair_hop_sum_matrix']
+            total_pair_distance += info['pair_distance_matrix']
+
             if proactive:
                 weighted_shortest_proactive_keys_ratio = env.proactive_key_consume / env.proactive_key_generation if env.proactive_key_generation > 0 else 0
                 weighted_shortest_average_proactive_keys += weighted_shortest_proactive_keys_ratio
@@ -1275,143 +1475,179 @@ if __name__ == "__main__":
         # shortest_average_proactive_gen_keys /= num_simulation
         # shortest_average_proactive_expired_keys /= num_simulation
 
-        # ================= 95% 신뢰구간 =================
-        ci_reward = confidence_interval(wsp_reward_samples, confidence=0.95)
-        ci_delay = confidence_interval(wsp_delay_samples, confidence=0.95)
+        # ============ (src, dst) pair matrix 계산 및 저장 ============
+        # 시뮬레이션 1회 기준 평균 request 개수
+        avg_pair_generated = total_pair_generated / num_simulation
+        avg_pair_provisioned = total_pair_provisioned / num_simulation
 
-        print(f"--- [threshold={threshold}] weighted_shortest 95% 신뢰구간 ---")
-        print_confidence_interval("average_reward", ci_reward)
-        print_confidence_interval("average_delay", ci_delay, unit="ms")
-        print(f"  시드별 reward: {[round(v, 4) for v in wsp_reward_samples]}")
-        print(f"  시드별 delay : {[round(v, 4) for v in wsp_delay_samples]}")
-        if ci_reward["n"] < 10:
-            print(f"  [주의] n={ci_reward['n']}: 자유도가 작아 구간 폭 추정이 불안정합니다."
-                  f" num_simulation >= 10 권장")
-        print()
-        # ===============================================
+        # 실제 할당된 request 의 평균 hop 수 = (전체 hop 합) / (전체 provision 개수)
+        avg_pair_hop = np.divide(total_pair_hop_sum, total_pair_provisioned,
+                                 out=np.zeros_like(total_pair_hop_sum),
+                                 where=total_pair_provisioned > 0)
+        pair_provision_ratio = np.divide(total_pair_provisioned, total_pair_generated,
+                                         out=np.zeros_like(total_pair_generated),
+                                         where=total_pair_generated > 0)
 
-        weighted_shortest_average_reward /= num_simulation
-        weighted_shortest_average_session_blocking /= num_simulation
-        weighted_shortest_average_total_generation_keys /= num_simulation
-        weighted_shortest_average_remaining_keys /= num_simulation
-        weighted_shortest_average_used_keys /= num_simulation
-        weighted_shortest_average_expired_keys /= num_simulation
-        weighted_shortest_average_delay /= num_simulation
-        weighted_shortest_average_hops /= num_simulation
-        weighted_shortest_average_proactive_keys /= num_simulation
-        weighted_shortest_average_proactive_used_keys /= num_simulation
-        weighted_shortest_average_proactive_gen_keys /= num_simulation
-        weighted_shortest_average_proactive_expired_keys /= num_simulation
-        weighted_shortest_average_proactive_used_keys_for_n_hop /= num_simulation
-        weighted_shortest_average_n_hop_proactive_gen_keys /= num_simulation
-        weighted_shortest_average_n_hop_proactive_used_keys /= num_simulation
-        weighted_shortest_average_n_hop_proactive_expired_keys /= num_simulation
-        weighted_shortest_average_fairness /= num_simulation
-        weighted_shortest_average_key_pool_usage /= num_simulation
-        weighted_shortest_average_key_overflow /= num_simulation
+        # 실제 할당된 request 의 평균 물리 거리 = (전체 거리 합) / (전체 provision 개수)
+        avg_pair_distance = np.divide(total_pair_distance, total_pair_provisioned,
+                                      out=np.zeros_like(total_pair_distance),
+                                      where=total_pair_provisioned > 0)
 
-        # qber_average_reward /= num_simulation
-        # qber_average_session_blocking /= num_simulation
-        # qber_average_total_generation_keys /= num_simulation
-        # qber_average_remaining_keys /= num_simulation
-        # qber_average_used_keys /= num_simulation
-        # qber_average_expired_keys /= num_simulation
-        # qber_average_delay /= num_simulation
-        # qber_average_proactive_keys /= num_simulation
-        # qber_average_proactive_used_keys /= num_simulation
-        # qber_average_proactive_gen_keys /= num_simulation
-        # qber_average_proactive_expired_keys /= num_simulation
-
-        # Print the results in a tabular format
-
-        if proactive:
-            print("threshold 1: ", env.lifetime_threshold_1)
-            print("threshold 4: ", env.lifetime_threshold_4)
-        print()
-
-        print("Average Results: ", threshold)
-        print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}{'Average hops':<20}")
-        # print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{shortest_average_hops / max_time_step:<4.2f}")
-        print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{weighted_shortest_average_hops / max_time_step:<4.2f}")
-        # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
-        print(f"{'Average key overflow : ':<30}{(weighted_shortest_average_key_overflow):<10}")
-        print(f"{'Average key pool usage : ':<30}{(weighted_shortest_average_key_pool_usage):<10}")
-        print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
-        print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
-        print(f"{'Average proactive keys expired : ':<30}{(weighted_shortest_average_proactive_expired_keys):<10}")
-        print(f"{'Average proactive keys used for n_hop : ':<30}{(weighted_shortest_average_proactive_used_keys_for_n_hop):<10}")
-        print(f"{'Average n_hop proactive keys generation : ':<30}{(weighted_shortest_average_n_hop_proactive_gen_keys):<10}")
-        print(f"{'Average n_hop proactive keys used : ':<30}{(weighted_shortest_average_n_hop_proactive_used_keys):<10}")
-        print(f"{'Average n_hop proactive keys expired : ':<30}{(weighted_shortest_average_n_hop_proactive_expired_keys):<10}")
-        print(f"{'Average request fairness : ':<30}{(weighted_shortest_average_fairness):<10}")
-        print()
-        # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
-        # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
-
-        # shortest_path_info['average_reward'].append(shortest_average_reward)
-        # shortest_path_info['average_session_blocking'].append(shortest_average_session_blocking)
-        # shortest_path_info['average_total_generation_keys'].append(shortest_average_total_generation_keys)
-        # shortest_path_info['average_remaining_keys'].append(shortest_average_remaining_keys)
-        # shortest_path_info['average_used_keys'].append(shortest_average_expired_keys)
-        # shortest_path_info['average_expired_keys'].append(shortest_average_expired_keys)
-        # shortest_path_info['average_delay'].append(shortest_average_delay / max_time_step)
-        # shortest_path_info['average_hops'].append(shortest_average_hops / max_time_step)
-        # if proactive:
-        #     shortest_path_info['average_proactive_keys'].append(shortest_average_proactive_keys)
-        #     shortest_path_info['average_proactive_used_keys'].append(shortest_average_proactive_used_keys)
-        #     shortest_path_info['average_proactive_gen_keys'].append(shortest_average_proactive_gen_keys)
-        #     shortest_path_info['average_proactive_expired_keys'].append(shortest_average_proactive_expired_keys)
-
-        weighted_shortest_path_info['average_provision'].append(weighted_shortest_average_reward)
-        weighted_shortest_path_info['average_session_blocking'].append(weighted_shortest_average_session_blocking)
-        weighted_shortest_path_info['average_total_generation_keys'].append(weighted_shortest_average_total_generation_keys)
-        weighted_shortest_path_info['average_remaining_keys'].append(weighted_shortest_average_remaining_keys)
-        weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_used_keys)
-        weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
-        weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
-        weighted_shortest_path_info['average_hops'].append(weighted_shortest_average_hops / max_time_step)
-        weighted_shortest_path_info['average_fairness'].append(weighted_shortest_average_fairness)
-        weighted_shortest_path_info['average_overflow_keys'].append(weighted_shortest_average_key_overflow)
-        weighted_shortest_path_info['average_key_pool_usage'].append(weighted_shortest_average_key_pool_usage)
-
-        # --- 95% 신뢰구간 결과 저장 ---
-        weighted_shortest_path_info['provision_mean'].append(ci_reward['mean'])
-        weighted_shortest_path_info['provision_ci_min'].append(ci_reward['lower'])
-        weighted_shortest_path_info['provision_ci_max'].append(ci_reward['upper'])
-        weighted_shortest_path_info['provision_ci_half'].append(ci_reward['half'])
-        weighted_shortest_path_info['delay_mean'].append(ci_delay['mean'])
-        weighted_shortest_path_info['delay_ci_min'].append(ci_delay['lower'])
-        weighted_shortest_path_info['delay_ci_max'].append(ci_delay['upper'])
-        weighted_shortest_path_info['delay_ci_half'].append(ci_delay['half'])
-        if proactive:
-            weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
-            weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
-            weighted_shortest_path_info['average_proactive_gen_keys'].append(weighted_shortest_average_proactive_gen_keys)
-            weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
-            weighted_shortest_path_info['average_proactive_used_keys_for_n_hop'].append(weighted_shortest_average_proactive_used_keys_for_n_hop)
-            weighted_shortest_path_info['average_n_hop_proactive_gen_keys'].append(weighted_shortest_average_n_hop_proactive_gen_keys)
-            weighted_shortest_path_info['average_n_hop_proactive_used_keys'].append(weighted_shortest_average_n_hop_proactive_used_keys)
-            weighted_shortest_path_info['average_n_hop_proactive_expired_keys'].append(weighted_shortest_average_n_hop_proactive_expired_keys)
-
-    # logging
-    # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_results_03_n-hop_keypool200.csv'
-
-    field_names = shortest_path_info.keys()
-    # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
+        matrix_prefix = (f"results/matrix/COST266_01_n-hop_seed1")
+        # save_matrix_csv(avg_pair_generated, f"{matrix_prefix}_generated_matrix.csv")
+        # save_matrix_csv(avg_pair_provisioned, f"{matrix_prefix}_provisioned_matrix.csv")
+        # save_matrix_csv(pair_provision_ratio, f"{matrix_prefix}_provision_ratio_matrix.csv")
+        # save_matrix_csv(avg_pair_hop, f"{matrix_prefix}_average_hop_matrix.csv")
+        # save_matrix_csv(avg_pair_distance, f"{matrix_prefix}_average_distance_matrix.csv")
+        save_pair_matrices_csv(
+            {
+                'generated': avg_pair_generated,
+                'provisioned': avg_pair_provisioned,
+                'hop_sum': total_pair_hop_sum / num_simulation,
+                'avg_hop': avg_pair_hop,
+                'distance_sum': total_pair_distance / num_simulation,
+                'avg_distance': avg_pair_distance,
+            },
+            f"{matrix_prefix}_pair_summary.csv"
+        )
+    #
+    #     # ================= 95% 신뢰구간 =================
+    #     ci_reward = confidence_interval(wsp_reward_samples, confidence=0.95)
+    #     ci_delay = confidence_interval(wsp_delay_samples, confidence=0.95)
+    #
+    #     print(f"--- [threshold={threshold}] weighted_shortest 95% 신뢰구간 ---")
+    #     print_confidence_interval("average_reward", ci_reward)
+    #     print_confidence_interval("average_delay", ci_delay, unit="ms")
+    #     print(f"  시드별 reward: {[round(v, 4) for v in wsp_reward_samples]}")
+    #     print(f"  시드별 delay : {[round(v, 4) for v in wsp_delay_samples]}")
+    #     if ci_reward["n"] < 10:
+    #         print(f"  [주의] n={ci_reward['n']}: 자유도가 작아 구간 폭 추정이 불안정합니다."
+    #               f" num_simulation >= 10 권장")
+    #     print()
+    #     # ===============================================
+    #
+    #     weighted_shortest_average_reward /= num_simulation
+    #     weighted_shortest_average_session_blocking /= num_simulation
+    #     weighted_shortest_average_total_generation_keys /= num_simulation
+    #     weighted_shortest_average_remaining_keys /= num_simulation
+    #     weighted_shortest_average_used_keys /= num_simulation
+    #     weighted_shortest_average_expired_keys /= num_simulation
+    #     weighted_shortest_average_delay /= num_simulation
+    #     weighted_shortest_average_hops /= num_simulation
+    #     weighted_shortest_average_proactive_keys /= num_simulation
+    #     weighted_shortest_average_proactive_used_keys /= num_simulation
+    #     weighted_shortest_average_proactive_gen_keys /= num_simulation
+    #     weighted_shortest_average_proactive_expired_keys /= num_simulation
+    #     weighted_shortest_average_proactive_used_keys_for_n_hop /= num_simulation
+    #     weighted_shortest_average_n_hop_proactive_gen_keys /= num_simulation
+    #     weighted_shortest_average_n_hop_proactive_used_keys /= num_simulation
+    #     weighted_shortest_average_n_hop_proactive_expired_keys /= num_simulation
+    #     weighted_shortest_average_fairness /= num_simulation
+    #     weighted_shortest_average_key_pool_usage /= num_simulation
+    #     weighted_shortest_average_key_overflow /= num_simulation
+    #
+    #     # qber_average_reward /= num_simulation
+    #     # qber_average_session_blocking /= num_simulation
+    #     # qber_average_total_generation_keys /= num_simulation
+    #     # qber_average_remaining_keys /= num_simulation
+    #     # qber_average_used_keys /= num_simulation
+    #     # qber_average_expired_keys /= num_simulation
+    #     # qber_average_delay /= num_simulation
+    #     # qber_average_proactive_keys /= num_simulation
+    #     # qber_average_proactive_used_keys /= num_simulation
+    #     # qber_average_proactive_gen_keys /= num_simulation
+    #     # qber_average_proactive_expired_keys /= num_simulation
+    #
+    #     # Print the results in a tabular format
+    #
+    #     if proactive:
+    #         print("threshold 1: ", env.lifetime_threshold_1)
+    #         print("threshold 4: ", env.lifetime_threshold_4)
+    #     print()
+    #
+    #     print("Average Results: ", threshold)
+    #     print(f"{'Metric':<20}{'Success':<10}{'Session Blocking':<20}{'Total generation keys':<25}{'Used keys':<20}{'Expired keys':<20}{'Used percentage':<20}{'Average delay':<20}{'Average hops':<20}")
+    #     # print(f"{'simple_shortest':<20}{shortest_average_reward:<10}{shortest_average_session_blocking:<20}{shortest_average_total_generation_keys:<25}{shortest_average_used_keys:<20}{shortest_average_expired_keys:<20}{(shortest_average_used_keys / shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{shortest_average_hops / max_time_step:<4.2f}")
+    #     print(f"{'weighted_shortest':<20}{weighted_shortest_average_reward:<10}{weighted_shortest_average_session_blocking:<20}{weighted_shortest_average_total_generation_keys:<25}{weighted_shortest_average_used_keys:<20}{weighted_shortest_average_expired_keys:<20}{(weighted_shortest_average_used_keys / weighted_shortest_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{weighted_shortest_average_delay / max_time_step:<4.3f}ms{' ':<15}{weighted_shortest_average_hops / max_time_step:<4.2f}")
+    #     # print(f"{'life_time_shortest':<20}{qber_average_reward:<10}{qber_average_session_blocking:<20}{qber_average_total_generation_keys:<25}{qber_average_used_keys:<20}{qber_average_expired_keys:<20}{(qber_average_used_keys/qber_average_total_generation_keys) * 100:<4.2f}%{' ':<15}{qber_average_delay/max_time_step:<4.3f}ms")
+    #     print(f"{'Average key overflow : ':<30}{(weighted_shortest_average_key_overflow):<10}")
+    #     print(f"{'Average key pool usage : ':<30}{(weighted_shortest_average_key_pool_usage):<10}")
+    #     print(f"{'Average proactive keys probability: ':<30}{(shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(weighted_shortest_average_proactive_keys) * 100:<4.2f}%{' ':<10}{(qber_average_proactive_keys) * 100:<4.2f}%{' ':<10}")
+    #     print(f"{'Average proactive keys : ':<30}{(shortest_average_proactive_used_keys)}/{(shortest_average_proactive_gen_keys):<10}{(weighted_shortest_average_proactive_used_keys)}/{(weighted_shortest_average_proactive_gen_keys):<10}{(qber_average_proactive_used_keys)}/{(qber_average_proactive_gen_keys):<10}")
+    #     print(f"{'Average proactive keys expired : ':<30}{(weighted_shortest_average_proactive_expired_keys):<10}")
+    #     print(f"{'Average proactive keys used for n_hop : ':<30}{(weighted_shortest_average_proactive_used_keys_for_n_hop):<10}")
+    #     print(f"{'Average n_hop proactive keys generation : ':<30}{(weighted_shortest_average_n_hop_proactive_gen_keys):<10}")
+    #     print(f"{'Average n_hop proactive keys used : ':<30}{(weighted_shortest_average_n_hop_proactive_used_keys):<10}")
+    #     print(f"{'Average n_hop proactive keys expired : ':<30}{(weighted_shortest_average_n_hop_proactive_expired_keys):<10}")
+    #     print(f"{'Average request fairness : ':<30}{(weighted_shortest_average_fairness):<10}")
+    #     print()
+    #     # print(f"{'Num keys':<20}{num_key_average_reward:<10}{num_key_average_session_blocking:<20}{num_key_average_total_generation_keys:<25}{num_key_average_used_keys:<20}{(num_key_average_used_keys/num_key_average_total_generation_keys) * 100:<4.2f}%")
+    #     # print(f"{'QBER + Num keys':<20}{combination_average_reward:<10}{combination_average_session_blocking:<20}{combination_average_total_generation_keys:<25}{combination_average_used_keys:<20}{(combination_average_used_keys/combination_average_total_generation_keys) * 100:<4.2f}%")
+    #
+    #     # shortest_path_info['average_reward'].append(shortest_average_reward)
+    #     # shortest_path_info['average_session_blocking'].append(shortest_average_session_blocking)
+    #     # shortest_path_info['average_total_generation_keys'].append(shortest_average_total_generation_keys)
+    #     # shortest_path_info['average_remaining_keys'].append(shortest_average_remaining_keys)
+    #     # shortest_path_info['average_used_keys'].append(shortest_average_expired_keys)
+    #     # shortest_path_info['average_expired_keys'].append(shortest_average_expired_keys)
+    #     # shortest_path_info['average_delay'].append(shortest_average_delay / max_time_step)
+    #     # shortest_path_info['average_hops'].append(shortest_average_hops / max_time_step)
+    #     # if proactive:
+    #     #     shortest_path_info['average_proactive_keys'].append(shortest_average_proactive_keys)
+    #     #     shortest_path_info['average_proactive_used_keys'].append(shortest_average_proactive_used_keys)
+    #     #     shortest_path_info['average_proactive_gen_keys'].append(shortest_average_proactive_gen_keys)
+    #     #     shortest_path_info['average_proactive_expired_keys'].append(shortest_average_proactive_expired_keys)
+    #
+    #     weighted_shortest_path_info['average_provision'].append(weighted_shortest_average_reward)
+    #     weighted_shortest_path_info['average_session_blocking'].append(weighted_shortest_average_session_blocking)
+    #     weighted_shortest_path_info['average_total_generation_keys'].append(weighted_shortest_average_total_generation_keys)
+    #     weighted_shortest_path_info['average_remaining_keys'].append(weighted_shortest_average_remaining_keys)
+    #     weighted_shortest_path_info['average_used_keys'].append(weighted_shortest_average_used_keys)
+    #     weighted_shortest_path_info['average_expired_keys'].append(weighted_shortest_average_expired_keys)
+    #     weighted_shortest_path_info['average_delay'].append(weighted_shortest_average_delay / max_time_step)
+    #     weighted_shortest_path_info['average_hops'].append(weighted_shortest_average_hops / max_time_step)
+    #     weighted_shortest_path_info['average_fairness'].append(weighted_shortest_average_fairness)
+    #     weighted_shortest_path_info['average_overflow_keys'].append(weighted_shortest_average_key_overflow)
+    #     weighted_shortest_path_info['average_key_pool_usage'].append(weighted_shortest_average_key_pool_usage)
+    #
+    #     # --- 95% 신뢰구간 결과 저장 ---
+    #     weighted_shortest_path_info['provision_mean'].append(ci_reward['mean'])
+    #     weighted_shortest_path_info['provision_ci_min'].append(ci_reward['lower'])
+    #     weighted_shortest_path_info['provision_ci_max'].append(ci_reward['upper'])
+    #     weighted_shortest_path_info['provision_ci_half'].append(ci_reward['half'])
+    #     weighted_shortest_path_info['delay_mean'].append(ci_delay['mean'])
+    #     weighted_shortest_path_info['delay_ci_min'].append(ci_delay['lower'])
+    #     weighted_shortest_path_info['delay_ci_max'].append(ci_delay['upper'])
+    #     weighted_shortest_path_info['delay_ci_half'].append(ci_delay['half'])
+    #     if proactive:
+    #         weighted_shortest_path_info['average_proactive_keys'].append(weighted_shortest_average_proactive_keys)
+    #         weighted_shortest_path_info['average_proactive_used_keys'].append(weighted_shortest_average_proactive_used_keys)
+    #         weighted_shortest_path_info['average_proactive_gen_keys'].append(weighted_shortest_average_proactive_gen_keys)
+    #         weighted_shortest_path_info['average_proactive_expired_keys'].append(weighted_shortest_average_proactive_expired_keys)
+    #         weighted_shortest_path_info['average_proactive_used_keys_for_n_hop'].append(weighted_shortest_average_proactive_used_keys_for_n_hop)
+    #         weighted_shortest_path_info['average_n_hop_proactive_gen_keys'].append(weighted_shortest_average_n_hop_proactive_gen_keys)
+    #         weighted_shortest_path_info['average_n_hop_proactive_used_keys'].append(weighted_shortest_average_n_hop_proactive_used_keys)
+    #         weighted_shortest_path_info['average_n_hop_proactive_expired_keys'].append(weighted_shortest_average_n_hop_proactive_expired_keys)
+    #
+    # # logging
+    # # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
+    # csv_file_path_2 = 'results/10_000/COST266_results_01_1-hop.csv'
+    #
+    # field_names = shortest_path_info.keys()
+    # # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
+    # #     writer = csv.writer(csvfile)
+    # #     writer.writerow(field_names)
+    # #
+    # #     max_len = max(len(v) for v in shortest_path_info.values())
+    # #     for i in range(max_len):
+    # #         row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
+    # #         writer.writerow(row)
+    #
+    # with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
     #     writer = csv.writer(csvfile)
     #     writer.writerow(field_names)
     #
-    #     max_len = max(len(v) for v in shortest_path_info.values())
+    #     max_len = max(len(v) for v in weighted_shortest_path_info.values())
     #     for i in range(max_len):
-    #         row = [shortest_path_info[key][i] if i < len(shortest_path_info[key]) else '' for key in field_names]
+    #         row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
     #         writer.writerow(row)
-
-    with open(csv_file_path_2, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(field_names)
-
-        max_len = max(len(v) for v in weighted_shortest_path_info.values())
-        for i in range(max_len):
-            row = [weighted_shortest_path_info[key][i] if i < len(weighted_shortest_path_info[key]) else '' for key in field_names]
-            writer.writerow(row)

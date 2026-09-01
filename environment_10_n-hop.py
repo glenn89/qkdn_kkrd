@@ -144,7 +144,7 @@ class QuantumEnvironment:
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
-            self.dist_probability = 0.30
+            self.dist_probability = 0.10
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
@@ -401,8 +401,8 @@ class QuantumEnvironment:
                     for i in range(len(path) - 1)
                 )
                 distance = len(path) - 1
-                # priority[(u, v)] = (1 / (remain_keys + 1)) + (1 / distance)
-                priority[(u, v)] = 1 / (remain_keys + 1)
+                priority[(u, v)] = (1 / (remain_keys + 1)) + (1 / distance)
+                # priority[(u, v)] = 1 / (remain_keys + 1)
                 # priority[(u, v)] = 1.0 / distance
             sorted_pairs = sorted(priority, key=priority.get, reverse=True)
             # print(priority)
@@ -705,13 +705,13 @@ class QuantumEnvironment:
                         # self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
                         self.used_keys += self.consume_key_size
                         if node in self.G.nodes:
-                            delay += 40
+                            delay += 80
                         elif node in self.expand_G.nodes and node not in self.G.nodes:
-                            delay += 20
-                    delay += 20
+                            delay += 40
+                    delay += 40
                     step_delay += delay
                 else:
-                    delay += 20
+                    delay += 40
                     step_delay += delay
                 # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", step_delay)
                 self.all_link_delay[(self.source_node, self.target_node)]['success'] += 1
@@ -1395,7 +1395,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_results_03_n-hop_priority_keycount.csv'
+    csv_file_path_2 = 'results/10_000/COST266_results_01_n-hop_40_80.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:
