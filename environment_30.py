@@ -138,12 +138,15 @@ class QuantumEnvironment:
             'BUTTERFLY': topology_conf.butterfly_topo,
             'KREONET': topology_conf.kreonet_topo,
             'NSFNET': topology_conf.nsfnet_topo,
-            'COST266': topology_conf.cost266_topo
+            'COST266': topology_conf.cost266_topo,
+            'ARNES': topology_conf.arnes_topo
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
+            self.dist_probability = 0.10
+        elif self.topology_conf['NAME'] == 'ARNES':
             self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
@@ -240,7 +243,7 @@ class QuantumEnvironment:
             } for n in range(len(edges))
         }
         nx.set_edge_attributes(self.G, edges_attribute)
-        if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
+        if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266' or self.topology_conf['NAME'] == 'ARNES':
             for i in range(len(self.G.nodes)):
                 for j in range(i + 1, len(self.G.nodes)):  # 대칭 행렬이므로 i < j
                     distance = self.topology_conf['QKD_TOPOLOGY_DISTANCE'][i][j]
@@ -257,7 +260,7 @@ class QuantumEnvironment:
         next_node_id = len(self.expand_G.nodes) + 1
         edges = list(self.expand_G.edges(data=True))
         for u, v, attr in edges:
-            if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266':
+            if self.topology_conf['NAME'] == 'NSFNET' or self.topology_conf['NAME'] == 'COST266' or self.topology_conf['NAME'] == 'ARNES':
                 num_spans = math.ceil(attr['distance'] / 100)
                 num_intermediates = max(0, num_spans - 1)
                 path_nodes = [u]
@@ -566,7 +569,7 @@ class QuantumEnvironment:
         self.num_request = 50
         self.num_request_scale = 1
         self.key_life_time = 100
-        self.key_pool_size = 50
+        self.key_pool_size = 100_000
         self.key_pool_min_threshold = 1
         self.key_pool = {}
         self.logi_key_pool = {}
@@ -1067,11 +1070,11 @@ if __name__ == "__main__":
     max_time_step = 10_000  # 1_000
     proactive = True
     proactive_type = '1-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    topology_type = 'ARNES'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
-    num_simulation = 3
-    seed = [0, 5, 10]  # 42
+    num_simulation = 5
+    seed = [0, 5, 10, 15, 20]  # 42
     # seed = [0]
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
@@ -1395,7 +1398,7 @@ if __name__ == "__main__":
 
     # logging
     # csv_file_path_1 = 'results/NSFNET_shortest_path_results_03_1-hop_10.csv'
-    csv_file_path_2 = 'results/10_000/COST266_results_03_1-hop_keypool50.csv'
+    csv_file_path_2 = 'results/10_000/ARNES_results_03_1-hop.csv'
 
     field_names = shortest_path_info.keys()
     # with open(csv_file_path_1, 'w', newline='', encoding='utf-8') as csvfile:

@@ -887,13 +887,13 @@ class QuantumEnvironment:
                         # self.node_num_heat[routing_path[i+1]][routing_path[i]] += 1
                         self.used_keys += self.consume_key_size
                         if node in self.G.nodes:
-                            delay += 20
+                            delay += 40
                         elif node in self.expand_G.nodes and node not in self.G.nodes:
-                            delay += 10
-                    delay += 10
+                            delay += 20
+                    delay += 20
                     step_delay += delay
                 else:
-                    delay += 10
+                    delay += 20
                     step_delay += delay
                 # print("timestep: ", self.time_step, "path: ", routing_path, "delay: ", step_delay)
                 self.all_link_delay[(self.source_node, self.target_node)]['success'] += 1
@@ -1252,8 +1252,8 @@ class QuantumEnvironment:
 if __name__ == "__main__":
     max_time_step = 10_000  # 1_000
     proactive = True
-    proactive_type = 'n-hop' # '1-hop', 'n-hop'
-    topology_type = 'COST266'
+    proactive_type = '1-hop' # '1-hop', 'n-hop'
+    topology_type = 'NSFNET'
     env = QuantumEnvironment(max_time_step=max_time_step, topology_type=topology_type) # BUTTERFLY
 
     num_simulation = 1
@@ -1262,7 +1262,7 @@ if __name__ == "__main__":
     action = []
     sp_delay, wsp_delay, lsp_delay = [], [], []
     # threshold_list = range(0, 21, 1)   # lifetime = 20
-    threshold_list = [100]
+    threshold_list = [0]
     # threshold_list = [0, 20, 40, 60, 80, 85, 90, 95, 100]    # lifetime = 100
 
     print("Simulation information")
@@ -1493,7 +1493,7 @@ if __name__ == "__main__":
                                       out=np.zeros_like(total_pair_distance),
                                       where=total_pair_provisioned > 0)
 
-        matrix_prefix = (f"results/matrix/COST266_01_n-hop_seed1")
+        matrix_prefix = (f"results/matrix/NSFNET_05_conv_seed1")
         # save_matrix_csv(avg_pair_generated, f"{matrix_prefix}_generated_matrix.csv")
         # save_matrix_csv(avg_pair_provisioned, f"{matrix_prefix}_provisioned_matrix.csv")
         # save_matrix_csv(pair_provision_ratio, f"{matrix_prefix}_provision_ratio_matrix.csv")

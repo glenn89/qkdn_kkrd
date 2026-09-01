@@ -138,13 +138,16 @@ class QuantumEnvironment:
             'BUTTERFLY': topology_conf.butterfly_topo,
             'KREONET': topology_conf.kreonet_topo,
             'NSFNET': topology_conf.nsfnet_topo,
-            'COST266': topology_conf.cost266_topo
+            'COST266': topology_conf.cost266_topo,
+            'ARNES': topology_conf.arnes_topo
         }
         self.topology_conf = self.topology_list[topology_type]
         if self.topology_conf['NAME'] == 'NSFNET':
             self.dist_probability = 0.50
         elif self.topology_conf['NAME'] == 'COST266':
             self.dist_probability = 0.10
+        elif self.topology_conf['NAME'] == 'ARNES':
+            self.dist_probability = 0.30
         self.metric_type = 'qber'   # type: 'simple_shortest', 'weighted_shortest', 'qber', 'num_key', 'combination'
         self.num_seed = 0
         self.max_time_step = max_time_step
